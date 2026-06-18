@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Keystone Home Lending — Texas Mortgages, Made Clear</title>
+<meta name="description" content="Texas home loans with transparent numbers. Conventional, FHA, VA, USDA, jumbo, and down-payment assistance — see your real estimated payment before you apply.">
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* ---- Landing-specific ---- */
+  .hero{background:linear-gradient(180deg,var(--ink) 0%,var(--ink-2) 100%);color:#fff;
+    position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;right:-120px;top:-120px;width:520px;height:520px;
+    background:radial-gradient(circle,rgba(19,122,82,.35),transparent 65%);pointer-events:none}
+  .hero-inner{max-width:var(--maxw);margin:0 auto;padding:84px 24px 96px;position:relative;z-index:1}
+  .hero h1{font-size:60px;max-width:15ch;letter-spacing:-.02em}
+  .hero h1 em{font-style:normal;color:var(--green);position:relative}
+  .hero .sub{font-size:19px;color:#C4CDDA;max-width:54ch;margin:22px 0 32px;line-height:1.55}
+  .hero-cta{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .hero-trust{display:flex;gap:30px;margin-top:48px;flex-wrap:wrap}
+  .hero-trust .ht{max-width:24ch}
+  .hero-trust .htn{font-family:var(--display);font-size:30px;font-weight:600}
+  .hero-trust .htl{color:#93A1B5;font-size:13.5px;margin-top:2px}
+
+  .eyebrow{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--green)}
+  .hero .eyebrow{color:var(--gold)}
+
+  section.block{padding:72px 0}
+  section.block.alt{background:var(--paper);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .sec-head{max-width:60ch;margin-bottom:40px}
+  .sec-head h2{font-size:38px;margin:10px 0 12px}
+  .sec-head p{color:var(--slate);font-size:17px}
+
+  .prog-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .pcard{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:26px;
+    box-shadow:var(--shadow);transition:transform .12s,box-shadow .15s}
+  .pcard:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
+  .pcard .pico{width:42px;height:42px;border-radius:11px;background:var(--green-50);color:var(--green-700);
+    display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:18px;margin-bottom:16px}
+  .pcard h3{font-size:20px;margin-bottom:7px}
+  .pcard p{color:var(--slate);font-size:14.5px;margin:0 0 12px}
+  .pcard .min{font-family:var(--mono);font-size:13px;color:var(--green-700);font-weight:600}
+
+  .steps3{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;counter-reset:s}
+  .s3{position:relative;padding-top:8px}
+  .s3 .n{font-family:var(--mono);font-size:13px;color:var(--gold);font-weight:600;letter-spacing:.05em}
+  .s3 h3{font-size:21px;margin:8px 0 8px}
+  .s3 p{color:var(--slate);font-size:15px}
+
+  .cta-band{background:var(--green);color:#fff;border-radius:var(--radius-lg);padding:54px;
+    display:flex;align-items:center;justify-content:space-between;gap:30px;flex-wrap:wrap}
+  .cta-band h2{font-size:34px;color:#fff;max-width:20ch}
+  .cta-band p{color:#D6F0E4;margin-top:8px;max-width:40ch}
+
+  footer.foot{background:var(--ink);color:#9FB0C4;padding:52px 0 40px;font-size:13.5px}
+  .foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1.4fr;gap:40px}
+  .foot .brand{color:#fff;font-size:22px;margin-bottom:12px}
+  .foot a{color:#9FB0C4;text-decoration:none;display:block;margin-bottom:8px}
+  .foot a:hover{color:#fff}
+  .foot h4{color:#fff;font-family:var(--ui);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px}
+  .disc{border-top:1px solid rgba(255,255,255,.1);margin-top:38px;padding-top:24px;color:#7C8AA0;font-size:12px;line-height:1.7;max-width:none}
+
+  @media (max-width:900px){
+    .hero h1{font-size:42px} .prog-cards,.steps3,.foot-grid{grid-template-columns:1fr}
+    .sec-head h2{font-size:30px} section.block{padding:54px 0}
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="brand" style="text-decoration:none">Keystone<span class="dot">.</span></a>
+    <div class="nav-links">
+      <a href="#programs">Loan Programs</a>
+      <a href="#how">How It Works</a>
+      <a href="/apply.html">Get Pre-Qualified</a>
+      <a href="/contact.html">Contact</a>
+    </div>
+    <div class="nav-right">
+      <a href="/portal.html" class="btn btn-ghost">Client Portal</a>
+      <a href="/apply.html" class="btn btn-primary">Start Application</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="hero-inner">
+    <div class="eyebrow">Texas home financing</div>
+    <h1>Know your real <em>numbers</em> before you ever apply.</h1>
+    <p class="sub">Keystone walks you through a full mortgage pre-qualification with your DTI, LTV,
+      estimated payment, and cash-to-close updating live — including Texas property taxes pulled by ZIP.
+      Every major loan program, no guesswork.</p>
+    <div class="hero-cta">
+      <a href="/apply.html" class="btn btn-primary btn-lg">Start your application</a>
+      <a href="#programs" class="btn btn-ghost btn-lg">Explore loan programs</a>
+    </div>
+    <div class="hero-trust">
+      <div class="ht"><div class="htn mono">7</div><div class="htl">loan programs, from FHA to jumbo</div></div>
+      <div class="ht"><div class="htn mono">254</div><div class="htl">Texas counties with tax estimates</div></div>
+      <div class="ht"><div class="htn mono">3%</div><div class="htl">down for qualified first-time buyers</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- PROGRAMS -->
+<section class="block" id="programs">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Loan programs</div>
+      <h2>Financing for every kind of Texas buyer</h2>
+      <p>Government-backed, conventional, jumbo, and assistance programs — each with its own down-payment
+        and qualification rules built into your live estimate.</p>
+    </div>
+    <div class="prog-cards">
+      <div class="pcard"><div class="pico">CV</div><h3>Conventional</h3>
+        <p>The standard for buyers with steady credit. PMI drops off automatically as you build equity.</p>
+        <div class="min">As low as 5% down</div></div>
+      <div class="pcard"><div class="pico">FT</div><h3>Conventional · First-Time Buyer</h3>
+        <p>Haven't owned a home in 3+ years? Qualify for a reduced down payment on a conventional loan.</p>
+        <div class="min">As low as 3% down</div></div>
+      <div class="pcard"><div class="pico">FH</div><h3>FHA</h3>
+        <p>Flexible credit guidelines with an upfront and annual MIP. A strong path for first-time buyers.</p>
+        <div class="min">3.5% down at 580+ score</div></div>
+      <div class="pcard"><div class="pico">VA</div><h3>VA</h3>
+        <p>For eligible veterans and service members. No monthly mortgage insurance, with a one-time funding fee.</p>
+        <div class="min">0% down for eligible borrowers</div></div>
+      <div class="pcard"><div class="pico">RD</div><h3>USDA Rural</h3>
+        <p>For homes in eligible rural areas within household income limits. No down payment required.</p>
+        <div class="min">0% down in eligible areas</div></div>
+      <div class="pcard"><div class="pico">JB</div><h3>Jumbo</h3>
+        <p>For loan amounts above the conforming limit. Stronger reserves and credit are typically required.</p>
+        <div class="min">From 10% down</div></div>
+    </div>
+    <p class="muted" style="margin-top:18px;font-size:14px">Down-payment assistance can be layered onto eligible
+      programs. Land purchases require 20% down. All figures are estimates — your final terms come from a full review.</p>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="block alt" id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">How it works</div>
+      <h2>From numbers to your front door</h2>
+    </div>
+    <div class="steps3">
+      <div class="s3"><div class="n">STEP 01</div><h3>Build your profile</h3>
+        <p>Tell us your target home, income, debts, and assets. We exclude the debts that don't count —
+          like installment loans with 10 or fewer payments left, and medical debt.</p></div>
+      <div class="s3"><div class="n">STEP 02</div><h3>See it underwrite live</h3>
+        <p>A sticky bar tracks your front and back DTI, LTV, estimated payment, and cash-to-close as you type,
+          with Texas property tax filled in automatically from the ZIP.</p></div>
+      <div class="s3"><div class="n">STEP 03</div><h3>Shop what you qualify for</h3>
+        <p>Create your secure account, submit, and land on a property dashboard filtered to your
+          qualified price range. Save the homes you love.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="block">
+  <div class="wrap">
+    <div class="cta-band">
+      <div>
+        <h2>Ready to see what you qualify for?</h2>
+        <p>It takes a few minutes and your numbers update as you go. No credit pull to get an estimate.</p>
+      </div>
+      <a href="/apply.html" class="btn btn-dark btn-lg">Start application</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="brand" style="font-family:var(--display);font-weight:700">Keystone<span style="color:var(--green)">.</span></div>
+        <p style="max-width:34ch;margin:0">Texas home lending with transparent numbers, from your first
+          estimate to closing day.</p>
+      </div>
+      <div>
+        <h4>Programs</h4>
+        <a href="#programs">Conventional</a><a href="#programs">FHA &amp; VA</a>
+        <a href="#programs">USDA</a><a href="#programs">Jumbo</a>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <a href="#how">How it works</a><a href="/apply.html">Apply</a>
+        <a href="/portal.html">Client portal</a><a href="/contact.html">Contact</a>
+      </div>
+      <div>
+        <h4>Get in touch</h4>
+        <a href="/contact.html">Request a callback</a>
+        <a href="/apply.html">Start an application</a>
+      </div>
+    </div>
+    <p class="disc">
+      Keystone Home Lending is a demonstration application. All rates, payments, taxes, mortgage-insurance
+      figures, and qualification results shown are <strong>estimates for educational purposes only</strong> and
+      do not constitute a Loan Estimate, a commitment to lend, or an offer of credit. Actual terms depend on a
+      full application, credit review, property appraisal, and underwriting. Texas property-tax figures are
+      county-level effective-rate estimates and may not reflect local MUD, PID, or special-district levies.
+      This platform is not a substitute for review by a licensed mortgage professional and a compliance review
+      under applicable federal and Texas law (including TILA, RESPA, ECOA, and the SAFE Act). Equal Housing Lender.
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,6 @@
+node_modules/
+data/store.json
+keystone.db
+keystone.db-*
+*.log
+.env

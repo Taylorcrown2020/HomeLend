@@ -1,0 +1,21 @@
+{
+  "name": "keystone-home-lending",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Texas home-lending pre-qualification platform: multi-step loan application with a live underwriting engine, client portal, and qualified-range property dashboard.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18 <23"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test:calc": "node test/test_calc.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  }
+}

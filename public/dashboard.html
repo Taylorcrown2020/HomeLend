@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Find a Home — Keystone Home Lending</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  body{background:var(--parchment)}
+  /* ---- Filter bar ---- */
+  .filterbar{background:var(--paper);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40}
+  .filterbar-inner{max-width:1320px;margin:0 auto;padding:14px 24px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .loc-pill{flex:1;min-width:240px;display:flex;align-items:center;gap:10px;border:1px solid var(--line);
+    border-radius:999px;padding:11px 18px;background:var(--paper);font-weight:500}
+  .loc-pill svg{flex:none}
+  .loc-pill input{border:none;padding:0;background:transparent;font-weight:500}
+  .loc-pill input:focus{box-shadow:none}
+  .fdrop{position:relative}
+  .fbtn{border:1px solid var(--line);border-radius:999px;padding:11px 16px;background:var(--paper);
+    font-weight:600;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .fbtn:hover{border-color:var(--slate-light)}
+  .fbtn .chev{color:var(--slate-light);font-size:11px}
+  .fbtn.has{border-color:var(--green);background:var(--green-50);color:var(--green-700)}
+  .fmenu{position:absolute;top:calc(100% + 8px);left:0;background:var(--paper);border:1px solid var(--line);
+    border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:18px;min-width:248px;z-index:50;display:none}
+  .fmenu.open{display:block}
+  .fmenu h5{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--slate);margin:0 0 10px;font-weight:700}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button{flex:1;min-width:46px;border:1px solid var(--line);background:var(--paper);border-radius:9px;
+    padding:9px 6px;cursor:pointer;font-weight:600;font-size:13px}
+  .seg button.on{border-color:var(--green);background:var(--green-50);color:var(--green-700)}
+  .tcheck{display:flex;align-items:center;gap:9px;padding:7px 0;cursor:pointer;font-size:14px}
+  .tcheck input{width:auto;margin:0}
+
+  /* ---- Layout: list + map ---- */
+  .dash{max-width:1320px;margin:0 auto;display:grid;grid-template-columns:1fr 420px;gap:0}
+  .listcol{padding:26px 24px 60px}
+  .mapcol{position:sticky;top:66px;height:calc(100vh - 66px);border-left:1px solid var(--line)}
+  .listhead{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px}
+  .listhead h1{font-size:30px}
+  .listhead .count{color:var(--slate-light);font-size:14.5px;margin-top:4px}
+  .qual{display:inline-flex;align-items:center;gap:8px;background:var(--green-50);color:var(--green-700);
+    border-radius:999px;padding:7px 14px;font-weight:600;font-size:13px;margin-bottom:18px}
+  .seg-sort{display:flex;gap:0;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--paper)}
+  .seg-sort button{border:none;background:transparent;padding:9px 18px;font-weight:600;font-size:13.5px;cursor:pointer}
+  .seg-sort button.on{background:var(--ink);color:#fff}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}
+  .pc{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
+    box-shadow:var(--shadow);transition:transform .12s,box-shadow .15s;cursor:pointer}
+  .pc:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
+  .pc .ph{position:relative;aspect-ratio:3/2;background:#e9e6df;overflow:hidden}
+  .pc .ph img{width:100%;height:100%;object-fit:cover}
+  .pc .rate{position:absolute;top:12px;left:12px;background:#fff;border-radius:999px;padding:4px 10px;
+    font-weight:700;font-size:13px;display:flex;align-items:center;gap:5px;box-shadow:var(--shadow)}
+  .pc .rate svg{color:var(--gold)}
+  .pc .dots{position:absolute;bottom:12px;left:0;right:0;display:flex;gap:5px;justify-content:center}
+  .pc .dots i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.55)}
+  .pc .dots i.on{background:#fff}
+  .pc .typetag{position:absolute;top:12px;right:52px;background:rgba(14,23,38,.78);color:#fff;border-radius:999px;
+    padding:4px 10px;font-size:11px;font-weight:600;text-transform:capitalize}
+  .pc .body{padding:16px 18px}
+  .pc .row1{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .pc .name{font-family:var(--display);font-weight:600;font-size:19px;color:var(--ink)}
+  .pc .price{font-family:var(--display);font-weight:700;font-size:21px;white-space:nowrap}
+  .pc .addr{color:var(--slate-light);font-size:13.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pc .chips{display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line-2)}
+  .pc .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;
+    padding:6px 11px;font-size:12.5px;font-weight:600;color:var(--slate)}
+  .pc .heart{margin-left:auto;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--paper);
+    display:grid;place-items:center;cursor:pointer;transition:all .12s}
+  .pc .heart:hover{border-color:var(--red)}
+  .pc .heart svg{color:var(--slate-light);transition:all .12s}
+  .pc .heart.saved{background:var(--red-50);border-color:var(--red)}
+  .pc .heart.saved svg{color:var(--red);fill:var(--red)}
+
+  /* map */
+  .mapwrap{position:relative;width:100%;height:100%;background:
+    repeating-linear-gradient(0deg,#eef1ee,#eef1ee 38px,#e7ebe6 38px,#e7ebe6 39px),
+    repeating-linear-gradient(90deg,#eef1ee,#eef1ee 38px,#e7ebe6 38px,#e7ebe6 39px),#eef1ee;overflow:hidden}
+  .mapnote{position:absolute;bottom:14px;left:14px;right:14px;background:rgba(255,255,255,.94);
+    border:1px solid var(--line);border-radius:10px;padding:10px 13px;font-size:11.5px;color:var(--slate);line-height:1.5}
+  .pin{position:absolute;transform:translate(-50%,-100%);background:var(--ink);color:#fff;border-radius:999px;
+    padding:5px 11px;font-family:var(--mono);font-weight:600;font-size:12px;box-shadow:var(--shadow);cursor:pointer;
+    white-space:nowrap;transition:all .12s}
+  .pin:hover,.pin.active{background:var(--green)}
+  .pin::after{content:"";position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:inherit}
+
+  .empty{grid-column:1/-1;text-align:center;padding:70px 20px;color:var(--slate-light)}
+
+  /* lightbox */
+  .lb{position:fixed;inset:0;background:rgba(14,23,38,.92);z-index:200;display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:30px}
+  .lb.open{display:flex}
+  .lb img{max-width:min(900px,92vw);max-height:74vh;border-radius:12px;object-fit:contain}
+  .lb .lbcap{color:#fff;text-align:center}
+  .lb .lbclose{position:absolute;top:20px;right:24px;color:#fff;font-size:30px;cursor:pointer;background:none;border:none}
+  .lb .lbnav{display:flex;gap:14px}
+  .lb .lbnav button{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.3);
+    border-radius:999px;padding:10px 22px;cursor:pointer;font-weight:600}
+
+  /* ---- Filter dropdowns: keep them on-screen ---- */
+  .filterbar-inner{position:relative}
+  .fmenu.flip-right{left:auto;right:0}      /* rightmost menus open toward the left edge */
+  @media (max-width:560px){
+    .fmenu{left:0;right:0;min-width:0;width:calc(100vw - 32px)}
+    .fmenu.flip-right{right:auto}
+  }
+
+  /* ---- "Your numbers" bar ---- */
+  .numbar{background:var(--ink);color:#fff;border-radius:var(--radius);box-shadow:var(--shadow);
+    padding:16px 18px;margin-bottom:18px}
+  .numbar .nb-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .numbar .nb-ctx{font-size:13px;color:#C7D2E0;display:flex;align-items:center;gap:8px;min-width:0}
+  .numbar .nb-ctx b{color:#fff;font-weight:600}
+  .numbar .nb-ctx .dotsep{opacity:.4}
+  .numbar .nb-clear{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);color:#fff;
+    border-radius:999px;padding:6px 13px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .numbar .nb-clear:hover{background:rgba(255,255,255,.22)}
+  .numbar .nb-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .numbar .nbm{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:var(--radius-sm);padding:11px 13px}
+  .numbar .nbm .l{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#9FB0C4;font-weight:700}
+  .numbar .nbm .v{font-family:var(--mono);font-size:20px;font-weight:600;margin-top:3px;display:flex;align-items:baseline;gap:5px}
+  .numbar .nbm .v small{font-size:11px;color:#9FB0C4;font-family:var(--ui)}
+  .numbar .nbm .v .tag{font-family:var(--ui);font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px}
+  .numbar .nbm .v .tag.good{background:rgba(19,122,82,.3);color:#7FE6B6}
+  .numbar .nbm .v .tag.warn{background:rgba(183,121,31,.3);color:#F1C779}
+  .numbar .nbm .v .tag.bad{background:rgba(192,57,43,.3);color:#F2A59C}
+  .numbar.no-app{background:var(--gold-50);color:var(--gold);border:1px solid var(--gold)}
+  .numbar.no-app a{color:inherit;text-decoration:underline}
+  @media (max-width:560px){ .numbar .nb-grid{grid-template-columns:1fr 1fr} }
+
+  /* ---- Per-card payment + select ---- */
+  .pc .payrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;
+    padding-top:12px;border-top:1px solid var(--line-2)}
+  .pc .payrow .est{font-size:13px;color:var(--slate)}
+  .pc .payrow .est b{font-family:var(--mono);font-size:15px;color:var(--ink)}
+  .pc .selbtn{border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:7px 13px;
+    font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;color:var(--slate)}
+  .pc .selbtn:hover{border-color:var(--green);color:var(--green-700)}
+  .pc.selected{border-color:var(--green);box-shadow:0 0 0 2px var(--green-50),var(--shadow-lg)}
+  .pc.selected .selbtn{background:var(--green);border-color:var(--green);color:#fff}
+
+  /* ---- Map toolbar + expanded modal ---- */
+  .maptools{position:absolute;top:14px;right:14px;display:flex;gap:8px;z-index:5}
+  .maptools button{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.95);
+    cursor:pointer;display:grid;place-items:center;box-shadow:var(--shadow)}
+  .maptools button:hover{border-color:var(--green);color:var(--green-700)}
+  .pin{max-width:none}
+  .mapmodal{position:fixed;inset:0;background:rgba(14,23,38,.55);z-index:210;display:none;
+    align-items:stretch;justify-content:stretch;padding:0}
+  .mapmodal.open{display:flex}
+  .mapmodal .sheet{background:var(--paper);margin:auto;width:min(1100px,96vw);height:min(86vh,820px);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);overflow:hidden;display:flex;flex-direction:column}
+  .mapmodal .mhead{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .mapmodal .mhead h3{font-size:20px}
+  .mapmodal .mhead .sub{font-size:13px;color:var(--slate-light);margin-top:2px}
+  .mapmodal .mclose{background:none;border:none;font-size:26px;cursor:pointer;color:var(--slate);line-height:1}
+  .bigmapwrap{position:relative;flex:1;overflow:hidden;background:#eef1ee;cursor:grab;touch-action:none}
+  .bigmapwrap.grabbing{cursor:grabbing}
+  .bigmap{position:absolute;top:0;left:0;width:100%;height:100%;transform-origin:0 0;
+    background:
+      repeating-linear-gradient(0deg,#eef1ee,#eef1ee 46px,#e4e9e3 46px,#e4e9e3 47px),
+      repeating-linear-gradient(90deg,#eef1ee,#eef1ee 46px,#e4e9e3 46px,#e4e9e3 47px),#eef1ee}
+  .bigmap .pin{font-size:13px;padding:6px 12px}
+  .bigmap .citylab{position:absolute;transform:translate(-50%,-50%);font-size:12px;font-weight:600;color:var(--slate);
+    background:rgba(255,255,255,.7);padding:2px 8px;border-radius:999px;pointer-events:none;white-space:nowrap}
+  .mapmodal .mfoot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 20px;
+    border-top:1px solid var(--line);font-size:13px;color:var(--slate);flex-wrap:wrap}
+  .mapmodal .mfoot .zoombtns{display:flex;gap:8px}
+  .mapmodal .mfoot .zoombtns button{width:34px;height:34px;border-radius:8px;border:1px solid var(--line);
+    background:var(--paper);cursor:pointer;font-size:18px;line-height:1}
+  .maphint{position:absolute;bottom:14px;left:14px;background:rgba(255,255,255,.94);border:1px solid var(--line);
+    border-radius:10px;padding:9px 13px;font-size:12px;color:var(--slate);max-width:340px;line-height:1.5;pointer-events:none}
+  .crosshair{position:absolute;width:18px;height:18px;border:2px solid var(--green);border-radius:50%;
+    transform:translate(-50%,-50%);pointer-events:none;display:none;box-shadow:0 0 0 3px var(--green-50)}
+
+  @media (max-width:1080px){
+    .dash{grid-template-columns:1fr} .mapcol{display:none} .cards{grid-template-columns:1fr 1fr}
+  }
+  @media (max-width:680px){ .cards{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="brand" style="text-decoration:none">Keystone<span class="dot">.</span></a>
+    <div class="nav-links">
+      <a href="/dashboard.html">Find a Home</a>
+      <a href="/apply.html">My Application</a>
+      <a href="/portal.html">Saved &amp; Portal</a>
+    </div>
+    <div class="nav-right">
+      <span id="whoami" class="muted" style="color:#9FB0C4;font-size:13.5px"></span>
+      <a href="/portal.html" class="btn btn-ghost">Client Portal</a>
+      <button id="logoutBtn" class="btn btn-primary" style="display:none">Log out</button>
+    </div>
+  </div>
+</nav>
+
+<!-- Persistent numbers bar (shown when logged in / application present) -->
+<div id="ksNumberBar" class="ksbar" style="display:none"></div>
+
+<!-- FILTERS -->
+<div class="filterbar">
+  <div class="filterbar-inner">
+    <div class="loc-pill">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+      <input id="zipInput" placeholder="Search by Texas ZIP or city" autocomplete="off">
+    </div>
+
+    <div class="fdrop">
+      <button class="fbtn" id="priceBtn">Price <span class="chev">▾</span></button>
+      <div class="fmenu" id="priceMenu">
+        <h5>Price range</h5>
+        <label class="field"><span>Minimum</span>
+          <div class="inline-prefix"><span class="adorn">$</span><input id="minPrice" type="number" placeholder="0"></div></label>
+        <label class="field"><span>Maximum <span class="hint" id="maxHint"></span></span>
+          <div class="inline-prefix"><span class="adorn">$</span><input id="maxPrice" type="number" placeholder="No limit"></div></label>
+        <button class="btn btn-line" style="width:100%" data-apply>Apply</button>
+      </div>
+    </div>
+
+    <div class="fdrop">
+      <button class="fbtn" id="bedsBtn">Beds <span class="chev">▾</span></button>
+      <div class="fmenu" id="bedsMenu">
+        <h5>Bedrooms (minimum)</h5>
+        <div class="seg" id="bedsSeg">
+          <button data-beds="">Any</button><button data-beds="1">1+</button><button data-beds="2">2+</button>
+          <button data-beds="3">3+</button><button data-beds="4">4+</button><button data-beds="5">5+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="fdrop">
+      <button class="fbtn" id="sqftBtn">Sq Ft <span class="chev">▾</span></button>
+      <div class="fmenu" id="sqftMenu">
+        <h5>Minimum square footage</h5>
+        <label class="field"><span>At least</span><input id="minSqft" type="number" placeholder="Any"></label>
+        <button class="btn btn-line" style="width:100%" data-apply>Apply</button>
+      </div>
+    </div>
+
+    <div class="fdrop">
+      <button class="fbtn" id="typeBtn">Home Type <span class="chev">▾</span></button>
+      <div class="fmenu" id="typeMenu">
+        <h5>Property types</h5>
+        <label class="tcheck"><input type="checkbox" class="ptype" value="single_family" checked> Single-family</label>
+        <label class="tcheck"><input type="checkbox" class="ptype" value="condo" checked> Condo / Townhome</label>
+        <label class="tcheck"><input type="checkbox" class="ptype" value="multi_family" checked> Multi-family</label>
+        <label class="tcheck"><input type="checkbox" class="ptype" value="land" checked> Land</label>
+        <p class="muted" style="font-size:12px;margin:10px 0 0">Land purchases require 20% down — your qualified
+          range may differ for land.</p>
+        <button class="btn btn-line" style="width:100%;margin-top:12px" data-apply>Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BODY -->
+<div class="dash">
+  <div class="listcol">
+    <div class="listhead">
+      <div>
+        <h1 id="areaTitle">Texas Homes for Sale</h1>
+        <div class="count" id="countLine">Loading listings…</div>
+      </div>
+      <div class="seg-sort" id="sortSeg">
+        <button data-sort="price_asc" class="on">Price ↑</button>
+        <button data-sort="price_desc">Price ↓</button>
+        <button data-sort="sqft_desc">Size</button>
+        <button data-sort="rating_desc">Rating</button>
+      </div>
+    </div>
+    <div id="qualBanner"></div>
+    <div class="cards" id="cards"></div>
+  </div>
+
+  <div class="mapcol">
+    <div class="mapwrap" id="map">
+      <div class="maptools">
+        <button id="mapExpandBtn" title="Open larger map" aria-label="Open larger map">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+      </div>
+      <div class="mapnote" id="mapNote">Markers show where each home sits. Tap the expand icon to open a larger,
+        draggable map — click anywhere on it to look in that area (the ZIP and property-tax rate update to match).</div>
+    </div>
+  </div>
+</div>
+
+<!-- LIGHTBOX -->
+<div class="lb" id="lightbox">
+  <button class="lbclose" id="lbClose">&times;</button>
+  <img id="lbImg" alt="property photo">
+  <div class="lbcap" id="lbCap"></div>
+  <div class="lbnav"><button id="lbPrev">‹ Prev</button><button id="lbNext">Next ›</button></div>
+</div>
+
+<!-- EXPANDED MAP -->
+<div class="mapmodal" id="mapModal">
+  <div class="sheet">
+    <div class="mhead">
+      <div>
+        <h3>Look around Texas</h3>
+        <div class="sub" id="mapModalSub">Drag to pan · scroll or use +/− to zoom · click anywhere to look there</div>
+      </div>
+      <button class="mclose" id="mapModalClose" aria-label="Close map">&times;</button>
+    </div>
+    <div class="bigmapwrap" id="bigMapWrap">
+      <div class="bigmap" id="bigMap"></div>
+      <div class="crosshair" id="mapCrosshair"></div>
+      <div class="maphint">Click any spot to set where you're looking — you don't have to click a home.
+        New listings and the property-tax rate for that area load into your dashboard.</div>
+    </div>
+    <div class="mfoot">
+      <div id="mapFootInfo">Looking across Texas</div>
+      <div class="zoombtns">
+        <button id="mapZoomOut" aria-label="Zoom out">−</button>
+        <button id="mapZoomIn" aria-label="Zoom in">+</button>
+        <button id="mapReset" style="width:auto;padding:0 12px;font-size:13px;font-weight:600">Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/market-data.js"></script>
+<script src="/js/tx-tax.js"></script>
+<script src="/js/calc.js"></script>
+<script src="/js/numberbar.js"></script>
+<script src="/js/dashboard.js"></script>
+</body>
+</html>

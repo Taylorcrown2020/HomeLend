@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Contact — Keystone Home Lending</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  body{background:var(--parchment)}
+  .shell{max-width:760px;margin:0 auto;padding:54px 24px 90px}
+  .eyebrow{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--green);margin-bottom:8px}
+  h1{font-size:40px;margin-bottom:8px}
+  .lede{color:var(--slate);font-size:17px;max-width:54ch;margin-bottom:30px}
+  .section-card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow)}
+  .msg{font-size:13.5px;margin-top:10px;min-height:18px}
+  .cta-strip{display:flex;gap:14px;align-items:center;margin-top:26px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="brand" style="text-decoration:none">Keystone<span class="dot">.</span></a>
+    <div class="nav-links">
+      <a href="/">Home</a><a href="/#programs">Loan Programs</a>
+      <a href="/apply.html">Get Pre-Qualified</a><a href="/contact.html">Contact</a>
+    </div>
+    <div class="nav-right">
+      <a href="/portal.html" class="btn btn-ghost">Client Portal</a>
+      <a href="/apply.html" class="btn btn-primary">Start Application</a>
+    </div>
+  </div>
+</nav>
+
+<div class="shell">
+  <div class="eyebrow">Get in touch</div>
+  <h1>Talk to a Keystone lending specialist</h1>
+  <p class="lede">Share a few details and we'll reach out. Ready to see your numbers now? You can start a full
+    pre-qualification any time — your estimate updates live as you go.</p>
+
+  <div class="section-card">
+    <div class="grid-2">
+      <label class="field"><span>First name</span><input id="c_first" placeholder="Jordan"></label>
+      <label class="field"><span>Last name</span><input id="c_last" placeholder="Rivera"></label>
+    </div>
+    <div class="grid-2">
+      <label class="field"><span>Email</span><input id="c_email" type="email" placeholder="you@email.com"></label>
+      <label class="field"><span>Phone</span><input id="c_phone" type="tel" placeholder="(555) 555-5555"></label>
+    </div>
+    <label class="field"><span>How can we help?</span>
+      <textarea id="c_msg" rows="4" placeholder="I'm a first-time buyer looking in the Dallas area…"></textarea></label>
+    <button id="c_send" class="btn btn-primary btn-lg">Request a callback</button>
+    <div class="msg" id="c_result"></div>
+  </div>
+
+  <div class="cta-strip">
+    <a href="/apply.html" class="btn btn-dark">Start your application</a>
+    <span class="muted">or call us — a real person picks up.</span>
+  </div>
+</div>
+
+<script>
+  document.getElementById('c_send').addEventListener('click', function () {
+    var r = document.getElementById('c_result');
+    var email = document.getElementById('c_email').value.trim();
+    var first = document.getElementById('c_first').value.trim();
+    if (!first || !email) { r.style.color = 'var(--red)'; r.textContent = 'Please add your name and email.'; return; }
+    // Demo: no inbound-lead endpoint is wired. In production, POST to a CRM / lead capture.
+    r.style.color = 'var(--green-700)';
+    r.textContent = 'Thanks, ' + first + ' — a specialist will reach out shortly. (Demo: connect this form to your CRM or lead inbox.)';
+    ['c_first','c_last','c_email','c_phone','c_msg'].forEach(function (id) { document.getElementById(id).value = ''; });
+  });
+</script>
+</body>
+</html>

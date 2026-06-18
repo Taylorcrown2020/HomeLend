@@ -1,0 +1,121 @@
+/* Keystone Home Lending — shared design system
+   Brand: warm-trust. Ink navy + parchment + an "approval green" signature,
+   gold accent echoing rating marks. Fraunces (display) / Inter (UI) /
+   IBM Plex Mono (live financial numbers). */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --ink:#0E1726; --ink-2:#1C2A3A; --parchment:#FBFAF7; --paper:#FFFFFF;
+  --green:#137A52; --green-700:#0E5E3F; --green-50:#E7F3EC;
+  --gold:#C99A2E; --gold-50:#FBF4E2;
+  --slate:#46566A; --slate-light:#7C8AA0; --line:#E8E3D8; --line-2:#EFECE4;
+  --red:#C0392B; --red-50:#FBEAE8; --amber:#B7791F; --amber-50:#FBF3E2;
+  --radius:14px; --radius-sm:10px; --radius-lg:22px;
+  --shadow:0 1px 2px rgba(14,23,38,.05),0 8px 24px rgba(14,23,38,.06);
+  --shadow-lg:0 12px 40px rgba(14,23,38,.12);
+  --maxw:1180px;
+  --display:'Fraunces',Georgia,serif; --ui:'Inter',system-ui,sans-serif; --mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:var(--ui);color:var(--ink);background:var(--parchment);
+  font-size:15.5px;line-height:1.55;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--display);font-weight:600;letter-spacing:-.01em;line-height:1.1;margin:0}
+a{color:inherit}
+img{max-width:100%;display:block}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+/* ---- Top navigation ---- */
+.nav{background:var(--ink);color:#fff;position:sticky;top:0;z-index:60}
+.nav-inner{max-width:var(--maxw);margin:0 auto;padding:16px 24px;display:flex;align-items:center;gap:34px}
+.brand{font-family:var(--display);font-weight:700;font-size:23px;letter-spacing:-.02em;display:flex;align-items:center;gap:2px}
+.brand .dot{color:var(--green)}
+.nav-links{display:flex;gap:26px;align-items:center;font-weight:500;font-size:14.5px}
+.nav-links a{color:#D6DCE6;text-decoration:none;transition:color .15s}
+.nav-links a:hover{color:#fff}
+.nav-right{margin-left:auto;display:flex;gap:12px;align-items:center}
+
+/* ---- Buttons ---- */
+.btn{font-family:var(--ui);font-weight:600;font-size:14.5px;border:none;cursor:pointer;
+  padding:11px 20px;border-radius:999px;transition:transform .08s,box-shadow .15s,background .15s;
+  text-decoration:none;display:inline-flex;align-items:center;gap:8px;line-height:1}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--green);color:#fff}
+.btn-primary:hover{background:var(--green-700)}
+.btn-ghost{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.28)}
+.btn-ghost:hover{border-color:#fff}
+.btn-dark{background:var(--ink);color:#fff}
+.btn-dark:hover{background:var(--ink-2)}
+.btn-line{background:var(--paper);color:var(--ink);border:1px solid var(--line)}
+.btn-line:hover{border-color:var(--ink)}
+.btn-lg{padding:15px 30px;font-size:16px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+/* ---- Forms ---- */
+label.field{display:block;margin-bottom:16px}
+.field > span{display:block;font-size:13px;font-weight:600;color:var(--slate);margin-bottom:6px}
+.field .hint{font-weight:400;color:var(--slate-light);font-size:12px}
+input,select,textarea{width:100%;font-family:var(--ui);font-size:15px;color:var(--ink);
+  padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--paper);
+  transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--green);
+  box-shadow:0 0 0 3px var(--green-50)}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 18px}
+.inline-prefix{position:relative}
+.inline-prefix > span.adorn{position:absolute;left:13px;top:50%;transform:translateY(-50%);
+  color:var(--slate-light);font-size:15px;pointer-events:none}
+.inline-prefix input{padding-left:26px}
+
+/* radio/checkbox cards */
+.choice-row{display:flex;flex-wrap:wrap;gap:10px}
+.choice{border:1px solid var(--line);border-radius:var(--radius-sm);padding:11px 16px;cursor:pointer;
+  font-weight:500;font-size:14px;background:var(--paper);transition:all .12s;user-select:none}
+.choice:hover{border-color:var(--slate-light)}
+.choice.sel{border-color:var(--green);background:var(--green-50);color:var(--green-700);font-weight:600}
+.choice input{display:none}
+
+/* ---- Cards ---- */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;
+  padding:4px 10px;border-radius:999px;background:var(--green-50);color:var(--green-700)}
+.tag.gold{background:var(--gold-50);color:var(--gold)}
+.tag.amber{background:var(--amber-50);color:var(--amber)}
+.tag.red{background:var(--red-50);color:var(--red)}
+
+.muted{color:var(--slate-light)}
+.divider{height:1px;background:var(--line-2);border:none;margin:22px 0}
+
+/* ---- Persistent "your numbers" bar (portal + dashboard, when logged in) ---- */
+.ksbar{background:var(--ink);color:#fff;position:sticky;z-index:50;border-bottom:1px solid rgba(255,255,255,.08)}
+.ksbar-inner{max-width:var(--maxw);margin:0 auto;padding:10px 24px;display:flex;align-items:center;gap:18px;
+  overflow-x:auto;-webkit-overflow-scrolling:touch}
+.ksbar .ks-ctx{font-size:12.5px;color:#C7D2E0;white-space:nowrap;flex:none;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+.ksbar .ks-ctx b{color:#fff;font-weight:600}
+.ksbar .ks-metrics{display:flex;align-items:center;gap:14px;margin-left:auto;flex:none}
+.ksbar .ksm{display:flex;flex-direction:column;line-height:1.15;white-space:nowrap}
+.ksbar .ksm .l{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:#9FB0C4;font-weight:700}
+.ksbar .ksm .v{font-family:var(--mono);font-size:16px;font-weight:600;display:flex;align-items:center;gap:6px}
+.ksbar .ksm .v small{font-size:10.5px;color:#9FB0C4;font-family:var(--ui)}
+.ksbar .ksm .v .tag{font-family:var(--ui);font-size:9.5px;font-weight:800;padding:1px 6px;border-radius:999px}
+.ksbar .tag.good{background:rgba(19,122,82,.32);color:#7FE6B6}
+.ksbar .tag.warn{background:rgba(183,121,31,.32);color:#F1C779}
+.ksbar .tag.bad{background:rgba(192,57,43,.32);color:#F2A59C}
+.ksbar .ks-sep{width:1px;height:30px;background:rgba(255,255,255,.12);flex:none}
+.ksbar .ks-clear{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);color:#fff;
+  border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex:none}
+.ksbar .ks-clear:hover{background:rgba(255,255,255,.22)}
+.ksbar.ks-prompt{background:var(--gold-50);color:var(--gold);border-bottom:1px solid var(--gold)}
+.ksbar.ks-prompt .ksbar-inner{font-size:13.5px;font-weight:500}
+.ksbar.ks-prompt a{color:inherit;text-decoration:underline}
+@media (max-width:760px){
+  .ksbar-inner{padding:9px 16px;gap:12px}
+  .ksbar .ks-ctx{max-width:none}
+}
+
+@media (max-width:760px){
+  .grid-2,.grid-3{grid-template-columns:1fr}
+  .nav-links{display:none}
+  .wrap{padding:0 16px}
+}
