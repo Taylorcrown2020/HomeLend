@@ -56,11 +56,12 @@
     <a href="/" class="brand" style="text-decoration:none">Keystone<span class="dot">.</span></a>
     <div class="nav-links">
       <a href="/">Home</a>
-      <a href="/apply.html">Apply</a>
-      <a href="/dashboard.html">Find a Home</a>
+      <a href="/apply.html" data-auth="out">Apply</a>
+      <a href="/dashboard.html" data-auth="in" style="display:none">Find a Home</a>
+      <a href="/apply.html" data-auth="in" style="display:none">My Application</a>
     </div>
     <div class="nav-right">
-      <span id="whoami" class="muted" style="color:#9FB0C4;font-size:13.5px"></span>
+      <span id="whoami" data-nav-user class="muted" style="color:#9FB0C4;font-size:13.5px"></span>
       <button id="logoutBtn" class="btn btn-primary" style="display:none">Log out</button>
     </div>
   </div>
@@ -131,6 +132,7 @@
   </p>
 </div>
 
+<script src="/js/nav.js"></script>
 <script src="/js/numberbar.js"></script>
 <script>
 (function () {

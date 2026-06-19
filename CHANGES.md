@@ -77,3 +77,41 @@ Changes made in this round, all built on the existing underwriting engine
   portal it reflects the home you last selected (or your application's target).
 - Implemented as a shared component (`public/js/numberbar.js`) so both pages stay
   consistent.
+
+---
+
+# Round 3 — auth, session, SSN, and navigation fixes
+
+## Single source of truth for "logged in" = the server session
+The app previously trusted three different signals (server session, browser
+`sessionStorage`, and hardcoded nav links), which contradicted each other and
+caused the broken behavior where "Find a Home" showed someone's numbers without
+a real login. Fixed:
+- Removed ALL `sessionStorage` ("ks_app_preview") use. Application data now comes
+  only from the server, only when authenticated.
+- The Find-a-Home dashboard is now gated: it checks `/api/me` first and redirects
+  to the portal login if there's no session. Nothing renders and no numbers
+  appear for a logged-out visitor.
+- New shared `public/js/nav.js` makes every page's nav auth-aware: items marked
+  `data-auth="in"` show only when logged in, `data-auth="out"` only when logged
+  out. "Find a Home" and "My Application" are logged-in-only and start hidden, so
+  they never flash for logged-out visitors.
+- After completing an application + creating an account, the user lands on the
+  client portal (server session established). On a server error the account is
+  reported as NOT created instead of faking a logged-in dashboard.
+
+## Account creation / login verified
+Registration saves the user (bcrypt hash) and the application; logout clears the
+session; logging back in with the same credentials restores everything. Verified
+end-to-end against a fresh database. (Ship with an empty store; it seeds itself.)
+
+## SSN input no longer scrambles digits
+The old formatter restored the caret to its pre-format position, so when a dash
+was auto-inserted the caret landed before the digit you just typed — reversing
+input. Rewrote it with digit-count-aware caret positioning so digits stay in the
+order typed (and mid-string edits behave).
+
+## Exit confirmation in the application
+Pressing "Home" (or the logo) inside the application now opens a confirmation:
+the application isn't saved and leaving deletes the entered information. "Keep
+editing" stays; "Leave & delete" exits to the home page.

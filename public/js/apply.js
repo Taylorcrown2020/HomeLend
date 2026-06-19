@@ -35,13 +35,36 @@
     if (digits.length <= 5) return digits.slice(0, 3) + '-' + digits.slice(3);
     return digits.slice(0, 3) + '-' + digits.slice(3, 5) + '-' + digits.slice(5);
   }
+  // How many digits sit to the left of the caret, so we can re-place the caret
+  // AFTER the same digit once dashes are (re)inserted — typing stays in order.
+  function digitsLeftOf(value, caret) {
+    return value.slice(0, caret).replace(/\D/g, '').length;
+  }
+  function caretAfterNDigits(formatted, n) {
+    if (n <= 0) return 0;
+    var seen = 0;
+    for (var i = 0; i < formatted.length; i++) {
+      if (/\d/.test(formatted[i])) { seen++; if (seen === n) return i + 1; }
+    }
+    return formatted.length;
+  }
   function wireSSN(inputId, toggleId) {
     var inp = $(inputId), tog = $(toggleId);
     if (!inp) return;
     inp.addEventListener('input', function () {
-      var pos = inp.selectionStart;
-      inp.value = formatSSN(inp.value);
-      try { inp.setSelectionRange(pos, pos); } catch(e) {}
+      var raw = inp.value;
+      var caret = inp.selectionStart;                 // may be null on some password inputs
+      var hasCaret = (caret !== null && caret !== undefined);
+      var nLeft = hasCaret ? digitsLeftOf(raw, caret) : 0;
+      var formatted = formatSSN(raw);
+      if (formatted === raw && hasCaret) return;       // nothing changed → leave caret alone
+      inp.value = formatted;
+      if (hasCaret) {
+        var pos = caretAfterNDigits(formatted, nLeft);
+        try { inp.setSelectionRange(pos, pos); } catch (e) {}
+      }
+      // when caret is unreadable (rare), value assignment leaves it at the end,
+      // which is correct for normal left-to-right typing.
     });
     if (tog) tog.addEventListener('click', function () {
       inp.type = inp.type === 'password' ? 'text' : 'password';
@@ -641,12 +664,9 @@
         .then(function (o) {
           if (!o.ok) { msg.style.color = 'var(--red)'; msg.textContent = o.j.error || 'Could not save.'; return; }
           msg.style.color = 'var(--green-700)'; msg.textContent = 'Saved ✓';
-          try { sessionStorage.setItem('ks_app_preview', JSON.stringify(snapshot())); } catch (e) {}
-          window.location.href = '/dashboard.html';
+          window.location.href = '/portal.html';
         }).catch(function () {
-          msg.style.color = 'var(--amber)'; msg.textContent = 'Could not reach the server — opening your dashboard.';
-          try { sessionStorage.setItem('ks_app_preview', JSON.stringify(snapshot())); } catch (e) {}
-          setTimeout(function () { window.location.href = '/dashboard.html'; }, 1200);
+          msg.style.color = 'var(--red)'; msg.textContent = 'Could not reach the server — please try again.';
         });
       return;
     }
@@ -663,14 +683,11 @@
       .then(function (o) {
         if (!o.ok) { msg.style.color = 'var(--red)'; msg.textContent = o.j.error || 'Something went wrong.'; return; }
         $('saveState').textContent = 'Saved ✓';
-        // Save snapshot for "My Application" drawer too
-        try { sessionStorage.setItem('ks_app_preview', JSON.stringify(snapshot())); } catch(e) {}
-        window.location.href = '/dashboard.html';
+        // Account created + session established on the server → go to the portal.
+        window.location.href = '/portal.html';
       }).catch(function () {
-        msg.style.color = 'var(--amber)';
-        msg.textContent = 'Could not reach the server. Showing your dashboard preview.';
-        try { sessionStorage.setItem('ks_app_preview', JSON.stringify(snapshot())); } catch(e) {}
-        setTimeout(function () { window.location.href = '/dashboard.html'; }, 1200);
+        msg.style.color = 'var(--red)';
+        msg.textContent = 'Could not reach the server — your account was not created. Please try again.';
       });
   }
 
@@ -693,10 +710,6 @@
       })
       .then(function (j) {
         var app = j && j.application;
-        if (!app) {
-          // offline preview fallback
-          try { var p = sessionStorage.getItem('ks_app_preview'); if (p) app = JSON.parse(p); } catch (e) {}
-        }
         if (app && app.loan) { prefillFromApplication(app); }
       })
       .catch(function () {});
@@ -795,11 +808,37 @@
     });
   }
 
+  /* ====== Exit guard ======
+     Leaving the application discards unsaved entries (there is no auto-save), so
+     intercept Home / brand clicks and confirm first. */
+  function wireExitGuard() {
+    var overlay = $('exitOverlay');
+    if (!overlay) return;
+    function openExit(e) {
+      if (e) e.preventDefault();
+      var msg = $('exitMsg');
+      if (msg) {
+        msg.textContent = isAuthed
+          ? 'Any edits you have made since your last save will be lost. Your previously submitted application stays on file.'
+          : "Your application isn't saved yet. If you leave now, the information you've entered will be deleted and you'll need to start over. There is no auto-save.";
+      }
+      var go = $('exitGo'); if (go) go.textContent = isAuthed ? 'Leave anyway' : 'Leave & delete';
+      overlay.classList.add('open');
+    }
+    function closeExit() { overlay.classList.remove('open'); }
+    document.querySelectorAll('[data-exit]').forEach(function (el) { el.addEventListener('click', openExit); });
+    $('exitStay').addEventListener('click', closeExit);
+    $('exitGo').addEventListener('click', function () { window.location.href = '/'; });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeExit(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && overlay.classList.contains('open')) closeExit(); });
+  }
+
   function init() {
     renderStepper();
     wireChoiceGroups();
     wireSSN('ssn', 'ssnToggle');
     wireSSN('coSsn', 'coSsnToggle');
+    wireExitGuard();
 
     // Navigation
     document.querySelectorAll('[data-next]').forEach(function (b) {

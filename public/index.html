@@ -75,12 +75,17 @@
     <div class="nav-links">
       <a href="#programs">Loan Programs</a>
       <a href="#how">How It Works</a>
-      <a href="/apply.html">Get Pre-Qualified</a>
+      <a href="/dashboard.html" data-auth="in" style="display:none">Find a Home</a>
+      <a href="/apply.html" data-auth="out">Get Pre-Qualified</a>
       <a href="/contact.html">Contact</a>
     </div>
     <div class="nav-right">
-      <a href="/portal.html" class="btn btn-ghost">Client Portal</a>
-      <a href="/apply.html" class="btn btn-primary">Start Application</a>
+      <span data-nav-user data-auth="in" style="display:none;color:#9FB0C4;font-size:13.5px"></span>
+      <a href="/apply.html" class="btn btn-ghost" data-auth="in" style="display:none">My Application</a>
+      <a href="/portal.html" class="btn btn-ghost" data-auth="in" style="display:none">Portal</a>
+      <button class="btn btn-primary" data-auth="in" data-logout style="display:none">Log out</button>
+      <a href="/portal.html" class="btn btn-ghost" data-auth="out">Client Portal</a>
+      <a href="/apply.html" class="btn btn-primary" data-auth="out">Start Application</a>
     </div>
   </div>
 </nav>
@@ -210,5 +215,6 @@
   </div>
 </footer>
 
+<script src="/js/nav.js"></script>
 </body>
 </html>

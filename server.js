@@ -12,7 +12,7 @@ const fs = require('fs');
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const { q } = require('./db.js');
+const { q } = require('./db');
 const Market = require('./public/js/market-data.js');
 
 /* ---- Minimal .env loader (no dependency) ----
@@ -38,6 +38,7 @@ const Market = require('./public/js/market-data.js');
 const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY || '';
 const RENTCAST_BASE = 'https://api.rentcast.io/v1';
 const LISTINGS_CACHE_TTL_MS = 1000 * 60 * 60 * 12; // 12h — protects the free tier
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -51,7 +52,7 @@ app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { // minimal security headers
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
 app.use(session({
@@ -270,6 +271,13 @@ app.post('/api/saved', requireAuth, (req, res) => {
 app.delete('/api/saved/:id', requireAuth, (req, res) => {
   q.removeSaved.run(req.session.userId, String(req.params.id));
   res.json({ ok: true });
+});
+
+/* ---- Client config (safe-to-expose, browser-side settings) ----
+   The Google Maps JS API key is used in the browser by design; restrict it by
+   HTTP referrer in the Google Cloud Console so it can't be used elsewhere. */
+app.get('/api/config', (req, res) => {
+  res.json({ googleMapsKey: GOOGLE_MAPS_API_KEY, rentcast: !!RENTCAST_API_KEY });
 });
 
 /* ---- Static site ---- */

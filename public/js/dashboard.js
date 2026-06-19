@@ -1,6 +1,6 @@
 /* dashboard.js — property search dashboard.
-   Reads the borrower's submitted application (server, with sessionStorage
-   fallback) and uses the SAME underwriting engine (calc.js + tx-tax.js) the
+   Reads the borrower's submitted application from the server (login required)
+   and uses the SAME underwriting engine (calc.js + tx-tax.js) the
    application uses, so every home shows a real estimated payment, and selecting
    a home (or changing where you're looking) updates your DTI, monthly payment,
    and cash to close — then writes those changes back onto your application.
@@ -29,75 +29,51 @@
     selectedId: null      // listing currently driving the numbers bar
   };
 
-  /* ---- Fixed Texas frame so geography (and clicks) are stable ---- */
-  var TXB = { minLng: -106.9, maxLng: -93.3, minLat: 25.5, maxLat: 36.8 };
-  function fx(lng) { return (lng - TXB.minLng) / (TXB.maxLng - TXB.minLng); }
-  function fy(lat) { return 1 - (lat - TXB.minLat) / (TXB.maxLat - TXB.minLat); }
-  function lngAt(fX) { return TXB.minLng + fX * (TXB.maxLng - TXB.minLng); }
-  function latAt(fY) { return TXB.minLat + (1 - fY) * (TXB.maxLat - TXB.minLat); }
-
-  // Representative metro anchors: a clicked point resolves to the nearest one.
-  var TX_ANCHORS = [
-    { zip: '75201', lat: 32.78, lng: -96.80, label: 'Dallas' },
-    { zip: '76104', lat: 32.75, lng: -97.33, label: 'Fort Worth' },
-    { zip: '78701', lat: 30.27, lng: -97.74, label: 'Austin' },
-    { zip: '78209', lat: 29.49, lng: -98.46, label: 'San Antonio' },
-    { zip: '77002', lat: 29.76, lng: -95.37, label: 'Houston' },
-    { zip: '79912', lat: 31.85, lng: -106.49, label: 'El Paso' },
-    { zip: '75032', lat: 32.89, lng: -96.43, label: 'Rockwall' },
-    { zip: '77479', lat: 29.60, lng: -95.63, label: 'Sugar Land' },
-    { zip: '77550', lat: 29.30, lng: -94.80, label: 'Galveston' },
-    { zip: '79401', lat: 33.58, lng: -101.85, label: 'Lubbock' },
-    { zip: '78676', lat: 29.99, lng: -98.10, label: 'Wimberley' },
-    { zip: '78401', lat: 27.80, lng: -97.40, label: 'Corpus Christi' },
-    { zip: '79701', lat: 31.99, lng: -102.08, label: 'Midland' }
-  ];
-  function nearestAnchor(lat, lng) {
-    var best = TX_ANCHORS[0], bd = Infinity;
-    TX_ANCHORS.forEach(function (a) {
-      var d = (a.lat - lat) * (a.lat - lat) + (a.lng - lng) * (a.lng - lng);
-      if (d < bd) { bd = d; best = a; }
-    });
-    return best;
+  /* ---- Google Maps state ---- */
+  var gmap = null, geocoder = null, gmapsReady = false, gmapsKey = null, gMarkers = {}, gInfo = null;
+  function priceShort(n) {
+    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+    return '$' + Math.round(n / 1000) + 'k';
   }
 
   /* ---------- Boot ---------- */
+  // Find-a-Home is a logged-in-only page. If there's no server session, send the
+  // visitor to the portal login. Nothing on this page loads or renders until the
+  // session is confirmed — so numbers never appear to a logged-out visitor.
   function boot() {
+    fetch('/api/me', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.user) { location.replace('/portal.html'); return; }
+        state.authed = true;
+        if ($('whoami')) $('whoami').textContent = j.user.email;
+        if ($('logoutBtn')) $('logoutBtn').style.display = '';
+        initDashboard();
+      })
+      .catch(function () { location.replace('/portal.html'); });
+  }
+  function initDashboard() {
     wireFilters();
     wireSort();
     wireLightbox();
-    wireMapModal();
     $('logoutBtn').addEventListener('click', logout);
-    $('mapExpandBtn').addEventListener('click', openMapModal);
+    $('mapExpandBtn').addEventListener('click', toggleMapExpand);
+    var mc = $('mapCollapseBtn'); if (mc) mc.addEventListener('click', toggleMapExpand);
     window.addEventListener('resize', positionBar);
-    Promise.all([loadApplication(), loadSaved(), loadMe()]).then(function () {
+    loadConfigAndMaps();
+    Promise.all([loadApplication(), loadSaved()]).then(function () {
       hydrateFromApp();
       applyQualifiedRange();
       refresh();
     });
   }
 
-  function loadMe() {
-    return fetch('/api/me', { credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) {
-        if (j && j.user) {
-          state.authed = true;
-          $('whoami').textContent = j.user.email;
-          $('logoutBtn').style.display = '';
-        }
-      }).catch(function () {});
-  }
-
   function loadApplication() {
+    // Server is the only source of truth — no client-side fallback.
     return fetch('/api/application', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : { application: null }; })
-      .then(function (j) {
-        if (j && j.application) { state.app = j.application; return; }
-        try { var p = sessionStorage.getItem('ks_app_preview'); if (p) state.app = JSON.parse(p); } catch (e) {}
-      }).catch(function () {
-        try { var p = sessionStorage.getItem('ks_app_preview'); if (p) state.app = JSON.parse(p); } catch (e) {}
-      });
+      .then(function (j) { if (j && j.application) state.app = j.application; })
+      .catch(function () {});
   }
 
   function loadSaved() {
@@ -319,12 +295,12 @@
     if (!arr.length) {
       cards.innerHTML = '<div class="empty"><h3 style="margin-bottom:6px">No matches in this range</h3>' +
         '<p>Try a different area on the map, or widen your price range or property types.</p></div>';
-      renderMap([]);
+      renderGoogleMarkers([]);
       return;
     }
     cards.innerHTML = arr.map(cardHTML).join('');
     arr.forEach(wireCard);
-    renderMap(arr);
+    renderGoogleMarkers(arr);
   }
   function areaName() {
     var tx = taxContext();
@@ -414,6 +390,7 @@
       if (b) b.textContent = on ? 'Selected ✓' : 'Use these numbers';
     });
     renderNumbar();
+    refreshMarkerStyles();
     persistContext();
   }
 
@@ -456,13 +433,7 @@
       updatedAt: new Date().toISOString()
     };
 
-    // keep the offline preview in sync too
-    try {
-      if (state.app) {
-        state.app.context = Object.assign({}, state.app.context, context);
-        sessionStorage.setItem('ks_app_preview', JSON.stringify(state.app));
-      }
-    } catch (e) {}
+    if (state.app) state.app.context = Object.assign({}, state.app.context, context);
 
     if (!state.authed) return; // nothing to write server-side
     clearTimeout(persistTimer);
@@ -481,155 +452,155 @@
     state.filters.zip = zip;
     if ($('zipInput')) $('zipInput').value = zip;
     markActive();
-    refresh();          // new houses + map
+    refresh();          // new houses + markers
     persistContext();   // new zip + tax rate onto the application
-    if (opts.closeModal) closeMapModal();
   }
 
-  /* ---------- Inline map panel (fixed Texas frame, clamped pins) ---------- */
-  function renderMap(arr) {
-    var map = $('map');
-    map.querySelectorAll('.pin').forEach(function (n) { n.remove(); });
-    if (!arr.length) return;
-    arr.slice(0, 24).forEach(function (p) {
+  /* ---------- Google Maps ---------- */
+  function loadConfigAndMaps() {
+    fetch('/api/config', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (cfg) {
+        gmapsKey = (cfg && cfg.googleMapsKey) || '';
+        if (!gmapsKey) { mapFallbackNotice(); return; }
+        injectMapsScript(gmapsKey);
+      })
+      .catch(function () { mapFallbackNotice(); });
+  }
+  function mapFallbackNotice() {
+    var note = $('mapNote');
+    if (note) note.innerHTML = 'Add a Google Maps API key to <code>.env</code> (GOOGLE_MAPS_API_KEY) to see homes on a live map. ' +
+      'Your listings still appear in the list on the left.';
+    var btn = $('mapExpandBtn'); if (btn) btn.style.display = 'none';
+    var gm = $('gmap'); if (gm) gm.style.display = 'none';
+  }
+  function injectMapsScript(key) {
+    if (window.google && window.google.maps) { initGoogleMap(); return; }
+    window.__ksInitGoogleMaps = initGoogleMap;
+    var s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) +
+      '&libraries=geocoding&callback=__ksInitGoogleMaps&loading=async';
+    s.async = true; s.defer = true;
+    s.onerror = function () { mapFallbackNotice(); };
+    document.head.appendChild(s);
+  }
+  function initGoogleMap() {
+    var el = $('gmap'); if (!el || !window.google) return;
+    gmap = new google.maps.Map(el, {
+      center: { lat: 31.2, lng: -99.0 }, zoom: 6,   // Texas
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+      clickableIcons: false,
+      styles: [
+        { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+        { featureType: 'transit', stylers: [{ visibility: 'off' }] }
+      ]
+    });
+    geocoder = new google.maps.Geocoder();
+    gInfo = new google.maps.InfoWindow();
+    // Click on empty map → reverse-geocode to a ZIP → look there.
+    gmap.addListener('click', function (e) {
+      reverseGeocodeToZip(e.latLng);
+    });
+    gmapsReady = true;
+    renderGoogleMarkers(sortListings(state.listings));
+  }
+
+  function pinIcon(text, selected) {
+    var bg = selected ? '#137A52' : '#0E1726';
+    var w = Math.max(46, 14 + text.length * 8), h = 34;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
+      '<rect x="1.5" y="1.5" rx="11" ry="11" width="' + (w - 3) + '" height="21" fill="' + bg + '" stroke="#ffffff" stroke-width="2"/>' +
+      '<path d="M' + (w / 2 - 6) + ' 22 L' + (w / 2) + ' 31 L' + (w / 2 + 6) + ' 22 Z" fill="' + bg + '"/>' +
+      '<text x="' + (w / 2) + '" y="17" text-anchor="middle" font-family="monospace" font-size="12" font-weight="700" fill="#ffffff">' + text + '</text>' +
+      '</svg>';
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      scaledSize: new google.maps.Size(w, h),
+      anchor: new google.maps.Point(w / 2, 31)
+    };
+  }
+  function clearMarkers() {
+    Object.keys(gMarkers).forEach(function (id) { gMarkers[id].setMap(null); });
+    gMarkers = {};
+  }
+  // Render listings as markers at their true coordinates and frame them.
+  function renderGoogleMarkers(arr) {
+    if (!gmapsReady || !gmap) return;
+    clearMarkers();
+    var bounds = new google.maps.LatLngBounds();
+    var any = false;
+    (arr || []).forEach(function (p) {
       if (!isFinite(p.lat) || !isFinite(p.lng)) return;
-      var x = clampPct(fx(p.lng) * 100);
-      var y = clampPct(fy(p.lat) * 100);
-      var pin = document.createElement('div');
-      pin.className = 'pin' + (String(p.id) === String(state.selectedId) ? ' active' : '');
-      pin.style.left = x + '%'; pin.style.top = y + '%';
-      pin.textContent = priceShort(p.price);
-      pin.addEventListener('click', function () { selectListing(p.id); });
-      pin.addEventListener('mouseenter', function () { var c = document.querySelector('.pc[data-id="' + p.id + '"]'); if (c) c.style.boxShadow = 'var(--shadow-lg)'; });
-      pin.addEventListener('mouseleave', function () { var c = document.querySelector('.pc[data-id="' + p.id + '"]'); if (c) c.style.boxShadow = ''; });
-      map.appendChild(pin);
+      var pos = { lat: +p.lat, lng: +p.lng };
+      var sel = String(p.id) === String(state.selectedId);
+      var m = new google.maps.Marker({
+        position: pos, map: gmap, icon: pinIcon(priceShort(p.price), sel),
+        title: p.title + ' · ' + fmtUSD(p.price), zIndex: sel ? 999 : 1
+      });
+      m.addListener('click', function () {
+        selectListing(p.id);
+        gInfo.setContent('<div style="font-family:Inter,sans-serif;min-width:150px">' +
+          '<div style="font-weight:600">' + escapeHtml(p.title) + '</div>' +
+          '<div style="color:#46566A;font-size:12.5px">' + escapeHtml(p.address) + ', ' + escapeHtml(p.city) + ' ' + p.zip + '</div>' +
+          '<div style="margin-top:4px;font-weight:700">' + fmtUSD(p.price) + ' · ' + (p.beds || 0) + ' bd / ' + (p.baths || 0) + ' ba</div></div>');
+        gInfo.open(gmap, m);
+      });
+      gMarkers[String(p.id)] = m;
+      bounds.extend(pos); any = true;
     });
-  }
-  function clampPct(v) { return Math.max(4, Math.min(96, v)); }
-  function priceShort(n) {
-    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
-    return '$' + Math.round(n / 1000) + 'k';
-  }
-
-  /* ---------- Expanded, draggable map ---------- */
-  var view = { cx: 0.5, cy: 0.5, zoom: 1 };
-  function openMapModal() {
-    // center on where we're looking, if known
-    var tx = taxContext();
-    var a = tx.zip ? nearestAnchorByZip(tx.zip) : null;
-    if (a) { view = { cx: fx(a.lng), cy: fy(a.lat), zoom: 2.4 }; }
-    else { view = { cx: 0.5, cy: 0.5, zoom: 1 }; }
-    $('mapModal').classList.add('open');
-    requestAnimationFrame(renderBigMap);
-    updateMapFoot();
-  }
-  function nearestAnchorByZip(zip) {
-    for (var i = 0; i < TX_ANCHORS.length; i++) if (TX_ANCHORS[i].zip === zip) return TX_ANCHORS[i];
-    var l = findListing && state.listings.filter(function (x) { return x.zip === zip; })[0];
-    return l ? { lat: l.lat, lng: l.lng, zip: zip } : null;
-  }
-  function closeMapModal() { $('mapModal').classList.remove('open'); }
-
-  function wrapSize() { var w = $('bigMapWrap'); return { W: w.clientWidth, H: w.clientHeight }; }
-  function toScreen(fX, fY) {
-    var s = wrapSize();
-    return { x: s.W / 2 + (fX - view.cx) * s.W * view.zoom, y: s.H / 2 + (fY - view.cy) * s.H * view.zoom };
-  }
-  function toFrac(px, py) {
-    var s = wrapSize();
-    return { fx: view.cx + (px - s.W / 2) / (s.W * view.zoom), fy: view.cy + (py - s.H / 2) / (s.H * view.zoom) };
-  }
-  function renderBigMap() {
-    var big = $('bigMap'); if (!big) return;
-    var s = wrapSize();
-    // background motion: where does the TX frame origin (0,0) land on screen?
-    var o = toScreen(0, 0), far = toScreen(1, 1);
-    big.style.backgroundPosition = o.x + 'px ' + o.y + 'px';
-    var cell = Math.max(18, ((far.x - o.x) / (TXB.maxLng - TXB.minLng))); // ~px per degree lng
-    big.style.backgroundSize = (cell) + 'px ' + (cell) + 'px';
-
-    big.querySelectorAll('.pin,.citylab').forEach(function (n) { n.remove(); });
-    // metro labels for orientation
-    TX_ANCHORS.forEach(function (a) {
-      var pt = toScreen(fx(a.lng), fy(a.lat));
-      if (pt.x < -60 || pt.x > s.W + 60 || pt.y < -30 || pt.y > s.H + 30) return;
-      var lab = document.createElement('div');
-      lab.className = 'citylab';
-      lab.style.left = pt.x + 'px'; lab.style.top = (pt.y - 14) + 'px';
-      lab.textContent = a.label;
-      big.appendChild(lab);
-    });
-    // listing pins
-    state.listings.slice(0, 60).forEach(function (p) {
-      if (!isFinite(p.lat) || !isFinite(p.lng)) return;
-      var pt = toScreen(fx(p.lng), fy(p.lat));
-      if (pt.x < -40 || pt.x > s.W + 40 || pt.y < -40 || pt.y > s.H + 40) return;
-      var pin = document.createElement('div');
-      pin.className = 'pin' + (String(p.id) === String(state.selectedId) ? ' active' : '');
-      pin.style.left = pt.x + 'px'; pin.style.top = pt.y + 'px';
-      pin.textContent = priceShort(p.price);
-      pin.addEventListener('click', function (e) { e.stopPropagation(); selectListing(p.id); setLookingZip(p.zip, { closeModal: true }); });
-      big.appendChild(pin);
-    });
-  }
-  function updateMapFoot() {
-    var info = $('mapFootInfo');
-    var c = toFrac(wrapSize().W / 2, wrapSize().H / 2);
-    var a = nearestAnchor(latAt(c.fy), lngAt(c.fx));
-    var e = Tax ? Tax.estimate(a.zip) : { ratePct: '—', county: a.label };
-    info.innerHTML = 'Centered near <b>' + a.label + '</b> · ZIP ' + a.zip + ' · tax ~' + e.ratePct + '%';
-  }
-  function wireMapModal() {
-    $('mapModalClose').addEventListener('click', closeMapModal);
-    $('mapModal').addEventListener('click', function (e) { if (e.target === this) closeMapModal(); });
-    document.addEventListener('keydown', function (e) {
-      if ($('mapModal').classList.contains('open') && e.key === 'Escape') closeMapModal();
-    });
-    $('mapZoomIn').addEventListener('click', function () { zoomBy(1.4); });
-    $('mapZoomOut').addEventListener('click', function () { zoomBy(1 / 1.4); });
-    $('mapReset').addEventListener('click', function () { view = { cx: 0.5, cy: 0.5, zoom: 1 }; renderBigMap(); updateMapFoot(); });
-
-    var wrap = $('bigMapWrap');
-    wrap.addEventListener('wheel', function (e) { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12); }, { passive: false });
-
-    var drag = null;
-    function down(px, py) { drag = { px: px, py: py, moved: 0, cx: view.cx, cy: view.cy }; wrap.classList.add('grabbing'); }
-    function move(px, py) {
-      if (!drag) return;
-      var s = wrapSize();
-      var dx = px - drag.px, dy = py - drag.py;
-      drag.moved += Math.abs(dx) + Math.abs(dy);
-      view.cx = drag.cx - dx / (s.W * view.zoom);
-      view.cy = drag.cy - dy / (s.H * view.zoom);
-      renderBigMap(); updateMapFoot();
+    if (any) {
+      gmap.fitBounds(bounds, 60);
+      // don't over-zoom a single marker
+      google.maps.event.addListenerOnce(gmap, 'idle', function () {
+        if (gmap.getZoom() > 15) gmap.setZoom(15);
+      });
+    } else if (state.filters.zip) {
+      centerOnZip(state.filters.zip);
     }
-    function up(px, py) {
-      if (!drag) return;
-      var wasClick = drag.moved < 6;
-      var startPx = drag.px, startPy = drag.py;
-      drag = null; wrap.classList.remove('grabbing');
-      if (wasClick) handleMapClick(startPx, startPy);
-    }
-    wrap.addEventListener('mousedown', function (e) { var r = wrap.getBoundingClientRect(); down(e.clientX - r.left, e.clientY - r.top); });
-    window.addEventListener('mousemove', function (e) { if (!drag) return; var r = wrap.getBoundingClientRect(); move(e.clientX - r.left, e.clientY - r.top); });
-    window.addEventListener('mouseup', function (e) { if (!drag) return; var r = wrap.getBoundingClientRect(); up(e.clientX - r.left, e.clientY - r.top); });
-    wrap.addEventListener('touchstart', function (e) { var r = wrap.getBoundingClientRect(), t = e.touches[0]; down(t.clientX - r.left, t.clientY - r.top); }, { passive: true });
-    wrap.addEventListener('touchmove', function (e) { var r = wrap.getBoundingClientRect(), t = e.touches[0]; move(t.clientX - r.left, t.clientY - r.top); }, { passive: true });
-    wrap.addEventListener('touchend', function (e) { var r = wrap.getBoundingClientRect(); up((drag ? drag.px : 0), (drag ? drag.py : 0)); });
-    window.addEventListener('resize', function () { if ($('mapModal').classList.contains('open')) { renderBigMap(); updateMapFoot(); } });
   }
-  function zoomBy(f) { view.zoom = Math.max(0.6, Math.min(7, view.zoom * f)); renderBigMap(); updateMapFoot(); }
-  function handleMapClick(px, py) {
-    var c = toFrac(px, py);
-    var a = nearestAnchor(latAt(c.fy), lngAt(c.fx));
-    // crosshair flash
-    var ch = $('mapCrosshair');
-    ch.style.left = px + 'px'; ch.style.top = py + 'px'; ch.style.display = 'block';
-    setTimeout(function () { ch.style.display = 'none'; }, 600);
-    // recenter gently on the chosen anchor and apply
-    view.cx = fx(a.lng); view.cy = fy(a.lat); if (view.zoom < 2) view.zoom = 2.4;
-    renderBigMap(); updateMapFoot();
-    setLookingZip(a.zip, { closeModal: true });
+  function refreshMarkerStyles() {
+    Object.keys(gMarkers).forEach(function (id) {
+      var p = findListing(id); if (!p) return;
+      var sel = id === String(state.selectedId);
+      gMarkers[id].setIcon(pinIcon(priceShort(p.price), sel));
+      gMarkers[id].setZIndex(sel ? 999 : 1);
+    });
+  }
+  function reverseGeocodeToZip(latLng) {
+    if (!geocoder) return;
+    geocoder.geocode({ location: latLng }, function (results, status) {
+      if (status !== 'OK' || !results || !results.length) return;
+      var zip = null;
+      for (var i = 0; i < results.length && !zip; i++) {
+        var comps = results[i].address_components || [];
+        for (var j = 0; j < comps.length; j++) {
+          if (comps[j].types.indexOf('postal_code') !== -1) { zip = comps[j].short_name; break; }
+        }
+      }
+      if (zip) { gmap.panTo(latLng); setLookingZip(zip); }
+    });
+  }
+  function centerOnZip(zip) {
+    if (!geocoder) return;
+    geocoder.geocode({ address: zip + ', TX, USA' }, function (results, status) {
+      if (status === 'OK' && results && results[0]) {
+        gmap.setCenter(results[0].geometry.location);
+        gmap.setZoom(12);
+      }
+    });
+  }
+  function toggleMapExpand() {
+    var col = document.querySelector('.mapcol');
+    if (!col) return;
+    var expanded = col.classList.toggle('expanded');
+    document.body.style.overflow = expanded ? 'hidden' : '';
+    // let the layout settle, then tell Google to re-measure and re-fit
+    setTimeout(function () {
+      if (gmap && window.google) {
+        google.maps.event.trigger(gmap, 'resize');
+        renderGoogleMarkers(sortListings(state.listings));
+      }
+    }, 60);
   }
 
   /* ---------- Lightbox ---------- */
