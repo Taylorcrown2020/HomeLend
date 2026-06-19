@@ -12,7 +12,7 @@ const fs = require('fs');
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const { q } = require('./db');
+const { q } = require('./db.js');
 const Market = require('./public/js/market-data.js');
 
 /* ---- Minimal .env loader (no dependency) ----
