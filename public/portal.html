@@ -45,6 +45,17 @@
   .sv .rm:hover{color:var(--red)}
   .none{color:var(--slate-light);font-size:14px;padding:18px 0}
 
+  .apps-list{display:grid;gap:12px;margin-top:16px}
+  .app-card{display:flex;gap:14px;align-items:center;border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;flex-wrap:wrap}
+  .app-card .ac-main{flex:1;min-width:200px}
+  .app-card .ac-purpose{font-family:var(--display);font-weight:600;font-size:17px;text-transform:capitalize}
+  .app-card .ac-meta{color:var(--slate-light);font-size:13px;margin-top:2px}
+  .app-card .ac-num{font-family:var(--mono);font-weight:600;font-size:15px;white-space:nowrap}
+  .app-card .ac-actions{display:flex;gap:8px}
+  .app-card .ac-actions .btn{padding:7px 14px;font-size:13px}
+  .ac-del{background:none;border:1px solid var(--line);color:var(--slate);border-radius:8px;cursor:pointer;padding:7px 12px;font-size:13px}
+  .ac-del:hover{border-color:var(--red);color:var(--red)}
+
   @media (max-width:820px){ .grid{grid-template-columns:1fr} }
 </style>
 </head>
@@ -97,6 +108,16 @@
       <h1 id="greeting">Your home dashboard</h1>
     </div>
     <a href="/dashboard.html" class="btn btn-primary">Browse homes</a>
+  </div>
+
+  <!-- Applications (one per loan purpose) -->
+  <div class="panel" style="margin-top:8px">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div><h2>Your applications</h2>
+      <div class="psub">One application per product. Open to edit, or delete to free up that product.</div></div>
+      <a href="/apply.html" class="btn btn-primary" style="white-space:nowrap">+ Start another application</a>
+    </div>
+    <div id="appsList" class="apps-list"><div class="none">Loading…</div></div>
   </div>
 
   <div class="grid">
@@ -166,8 +187,47 @@
     $('logoutBtn').style.display = '';
     $('greeting').textContent = user.firstName ? ('Welcome back, ' + user.firstName) : 'Your home dashboard';
     show('portal');
+    loadApplications();
     loadApplication();
     loadSaved();
+  }
+
+  var PURPOSE_LABEL = { purchase: 'Purchase', refinance: 'Refinance', investment: 'Investment property', second_home: 'Second home' };
+  function loadApplications() {
+    fetch('/api/applications', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { applications: [] }; })
+      .then(function (j) { renderApps((j && j.applications) || []); })
+      .catch(function () { renderApps([]); });
+  }
+  function renderApps(apps) {
+    var box = $('appsList');
+    if (!apps.length) {
+      box.innerHTML = '<div class="none">No applications yet. <a href="/apply.html" style="color:var(--green-700);font-weight:600">Start one</a>.</div>';
+      return;
+    }
+    box.innerHTML = apps.map(function (a) {
+      var when = a.updatedAt ? new Date((a.updatedAt + '').replace(' ', 'T')).toLocaleDateString() : '';
+      var prog = (a.program || '').replace(/_/g, ' ');
+      var price = a.purchasePrice ? '$' + Math.round(a.purchasePrice).toLocaleString() : '—';
+      var pay = a.totalMonthly ? '$' + Math.round(a.totalMonthly).toLocaleString() + '/mo' : '';
+      return '<div class="app-card" data-purpose="' + a.purpose + '">' +
+        '<div class="ac-main"><div class="ac-purpose">' + (PURPOSE_LABEL[a.purpose] || a.purpose) + '</div>' +
+        '<div class="ac-meta">' + (prog ? cap(prog) + ' · ' : '') + price + (pay ? ' · ' + pay : '') +
+        (when ? ' · updated ' + when : '') + '</div></div>' +
+        '<div class="ac-actions">' +
+        '<a class="btn btn-primary" href="/apply.html?purpose=' + encodeURIComponent(a.purpose) + '">Open / edit</a>' +
+        '<button class="ac-del" data-del="' + a.purpose + '">Delete</button>' +
+        '</div></div>';
+    }).join('');
+    box.querySelectorAll('[data-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var purpose = b.getAttribute('data-del');
+        if (!window.confirm('Delete your ' + (PURPOSE_LABEL[purpose] || purpose) + ' application? This frees up that product so you can start a new one.')) return;
+        fetch('/api/application?purpose=' + encodeURIComponent(purpose), { method: 'DELETE', credentials: 'same-origin' })
+          .then(function () { loadApplications(); loadApplication(); })
+          .catch(function () {});
+      });
+    });
   }
 
   function doLogin() {

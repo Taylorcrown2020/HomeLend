@@ -30,8 +30,11 @@ try {
     CREATE TABLE IF NOT EXISTS applications (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL DEFAULT 'purchase',
       data_json TEXT NOT NULL, status TEXT DEFAULT 'submitted',
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, purpose)
     );
     CREATE TABLE IF NOT EXISTS saved_properties (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,10 +57,12 @@ try {
                             VALUES (@email,@hash,@first,@last,@phone)`),
     userByEmail: db.prepare(`SELECT * FROM users WHERE email = ?`),
     userById: db.prepare(`SELECT id,email,first_name,last_name,phone,created_at FROM users WHERE id = ?`),
-    addApplication: db.prepare(`INSERT INTO applications (user_id,data_json) VALUES (?,?)`),
-    latestApplication: db.prepare(`SELECT * FROM applications WHERE user_id = ? ORDER BY id DESC LIMIT 1`),
-    updateLatestApplication: db.prepare(`UPDATE applications SET data_json = ?
-      WHERE id = (SELECT id FROM applications WHERE user_id = ? ORDER BY id DESC LIMIT 1)`),
+    insertApplication: db.prepare(`INSERT INTO applications (user_id,purpose,data_json) VALUES (?,?,?)`),
+    appByPurpose: db.prepare(`SELECT * FROM applications WHERE user_id = ? AND purpose = ?`),
+    updateApplicationById: db.prepare(`UPDATE applications SET data_json = ?, status = 'submitted', updated_at = datetime('now') WHERE id = ?`),
+    listApplications: db.prepare(`SELECT * FROM applications WHERE user_id = ? ORDER BY updated_at DESC, id DESC`),
+    deleteByPurpose: db.prepare(`DELETE FROM applications WHERE user_id = ? AND purpose = ?`),
+    latestApplication: db.prepare(`SELECT * FROM applications WHERE user_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1`),
     saveProperty: db.prepare(`INSERT OR REPLACE INTO saved_properties (user_id,listing_id,data_json) VALUES (?,?,?)`),
     listSaved: db.prepare(`SELECT listing_id,data_json,created_at FROM saved_properties WHERE user_id = ? ORDER BY id DESC`),
     removeSaved: db.prepare(`DELETE FROM saved_properties WHERE user_id = ? AND listing_id = ?`),
@@ -86,19 +91,32 @@ try {
     } },
     userByEmail: { get(email) { return mem.users.find(u => u.email === email); } },
     userById: { get(id) { const u = mem.users.find(x => x.id === id); return u && { id: u.id, email: u.email, first_name: u.first_name, last_name: u.last_name, phone: u.phone, created_at: u.created_at }; } },
-    addApplication: { run(userId, dataJson) {
+    insertApplication: { run(userId, purpose, dataJson) {
       const id = ++mem.seq.applications;
-      mem.applications.push({ id, user_id: userId, data_json: dataJson, status: 'submitted', created_at: now() });
+      mem.applications.push({ id, user_id: userId, purpose: purpose || 'purchase', data_json: dataJson, status: 'submitted', created_at: now(), updated_at: now() });
       persist(); return { lastInsertRowid: id };
     } },
-    latestApplication: { get(userId) {
-      const rows = mem.applications.filter(a => a.user_id === userId).sort((a, b) => b.id - a.id);
-      return rows[0];
+    appByPurpose: { get(userId, purpose) {
+      return mem.applications.find(a => a.user_id === userId && (a.purpose || 'purchase') === purpose);
     } },
-    updateLatestApplication: { run(dataJson, userId) {
-      const rows = mem.applications.filter(a => a.user_id === userId).sort((a, b) => b.id - a.id);
-      if (rows[0]) { rows[0].data_json = dataJson; persist(); }
-      return { changes: rows[0] ? 1 : 0 };
+    updateApplicationById: { run(dataJson, id) {
+      const row = mem.applications.find(a => a.id === id);
+      if (row) { row.data_json = dataJson; row.status = 'submitted'; row.updated_at = now(); persist(); }
+      return { changes: row ? 1 : 0 };
+    } },
+    listApplications: { all(userId) {
+      return mem.applications.filter(a => a.user_id === userId)
+        .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') || b.id - a.id);
+    } },
+    deleteByPurpose: { run(userId, purpose) {
+      const before = mem.applications.length;
+      mem.applications = mem.applications.filter(a => !(a.user_id === userId && (a.purpose || 'purchase') === purpose));
+      persist(); return { changes: before - mem.applications.length };
+    } },
+    latestApplication: { get(userId) {
+      const rows = mem.applications.filter(a => a.user_id === userId)
+        .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') || b.id - a.id);
+      return rows[0];
     } },
     saveProperty: { run(userId, listingId, dataJson) {
       const existing = mem.saved.find(s => s.user_id === userId && s.listing_id === listingId);

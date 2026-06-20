@@ -10,10 +10,14 @@
   var step = 0;
   var state = {
     program: 'conventional', termYears: 30, dpa: false, dpaRatePremium: 0.625,
-    debts: [], assets: [], taxRatePct: null, taxCounty: null, taxSource: null,
+    debts: [], assets: [], reos: [], taxRatePct: null, taxCounty: null, taxSource: null,
     selectedRate: null, appType: 'solo',
     ownRent: null,    // 'own' | 'rent' | 'other'
     isOwner: false,   // true if user currently owns a home
+    ownedRecently: null, // owned/sold a home in last 3 yrs → not a first-time buyer
+    loanPurpose: 'purchase',  // purchase | refinance | investment | second_home
+    occupancy: 'primary',     // primary | second | investment
+    refi: { value: 0, payoff: 0, type: 'rate_term', cashOut: 0, financeCosts: true },
     usdaAreaStatus: 'unknown', // 'yes'|'no'|'unknown'
   };
 
@@ -26,7 +30,16 @@
 
   var CONFORMING_LIMIT = 806500;
   // DTI limits by program
-  var MAX_BACK_DTI = { fha: 56.9, va: 60, usda: 43, conventional: 50, conventional_fthb: 50, jumbo: 43, land: 43 };
+  // Back-end DTI ceilings come from the shared calc rule table (single source of
+  // truth). Falls back to sane defaults if the engine isn't loaded yet.
+  var MAX_BACK_DTI = (function () {
+    var m = {}, programs = ['conventional', 'conventional_fthb', 'fha', 'va', 'usda', 'jumbo', 'land'];
+    if (window.MortgageCalc && MortgageCalc.maxBackDTIFor) {
+      programs.forEach(function (p) { m[p] = MortgageCalc.maxBackDTIFor(p); });
+      return m;
+    }
+    return { fha: 56.9, va: 60, usda: 43, conventional: 50, conventional_fthb: 50, jumbo: 43, land: 43 };
+  })();
 
   /* ====== SSN formatting ====== */
   function formatSSN(val) {
@@ -96,28 +109,43 @@
   }
 
   /* ====== Program eligibility filtering ====== */
+  // Real-world occupancy rules: FHA/VA/USDA are owner-occupied (primary) only;
+  // Conventional 97 / DPA require a primary residence AND a first-time buyer
+  // (no ownership in the last 3 years). Second homes and investment properties
+  // are Conventional/Jumbo only, with higher minimum down.
   function getEligiblePrograms() {
     var eligible = {};
     var loanAmt = loanAmount();
     var isJumbo = loanAmt > CONFORMING_LIMIT && loanAmt > 0;
-    var isOwner = state.isOwner; // currently owns a home
+    var occ = state.occupancy || 'primary';
+    var primary = occ === 'primary';
 
-    // conventional always ok
+    // Refinance: Conventional / FHA / VA / Jumbo only (no USDA-rural, FTHB, land).
+    if (state.loanPurpose === 'refinance') {
+      eligible.conventional = { ok: true };
+      eligible.conventional_fthb = { ok: false, reason: 'First-time-buyer programs are for purchases.' };
+      eligible.fha = { ok: true };
+      eligible.va = { ok: true };
+      eligible.usda = { ok: false, reason: 'Not offered for refinances here.' };
+      eligible.jumbo = { ok: isJumbo || loanAmt === 0, reason: (!isJumbo && loanAmt > 0) ? 'Below the conforming limit — Jumbo not needed.' : null };
+      eligible.land = { ok: false, reason: 'Not applicable to a refinance.' };
+      return eligible;
+    }
+
+    var fthb = state.ownedRecently === false;
+    var notPrimaryReason = occ === 'investment' ? 'Not available for investment properties.' : 'Not available for second homes.';
     eligible.conventional = { ok: true };
-    // FTHB: only if NOT currently owning
     eligible.conventional_fthb = {
-      ok: !isOwner,
-      reason: isOwner ? 'Not available: you currently own a home.' : null
+      ok: primary && fthb,
+      reason: !primary ? notPrimaryReason : (!fthb ? 'First-Time Buyer (Conv. 97) requires no home ownership in the last 3 years.' : null)
     };
-    eligible.fha = { ok: true };
-    eligible.va = { ok: true };
-    // USDA: not ok if user explicitly said area is NOT eligible
+    eligible.fha = { ok: primary, reason: primary ? null : notPrimaryReason + ' FHA is owner-occupied only.' };
+    eligible.va  = { ok: primary, reason: primary ? null : notPrimaryReason + ' VA is owner-occupied only.' };
     eligible.usda = {
-      ok: state.usdaAreaStatus !== 'no' && !isOwner,
-      reason: state.usdaAreaStatus === 'no' ? 'Property is not in a USDA-eligible rural area.' :
-              isOwner ? 'USDA requires you not to own another adequate home.' : null
+      ok: primary && state.usdaAreaStatus !== 'no',
+      reason: !primary ? (notPrimaryReason + ' USDA is owner-occupied only.') :
+              state.usdaAreaStatus === 'no' ? 'Property is not in a USDA-eligible rural area.' : null
     };
-    // Jumbo: only ok if loan IS jumbo
     eligible.jumbo = {
       ok: isJumbo || loanAmt === 0,
       reason: (!isJumbo && loanAmt > 0) ? 'Your loan is below the $' + CONFORMING_LIMIT.toLocaleString() + ' conforming limit — Jumbo not needed.' : null
@@ -125,6 +153,17 @@
     eligible.land = { ok: true };
     return eligible;
   }
+  // Minimum down payment (%) for program + occupancy, from the shared rule table.
+  function minDownFor(program, occ) {
+    occ = occ || state.occupancy || 'primary';
+    var credit = num($('creditScore') ? $('creditScore').value : 0);
+    if (window.MortgageCalc && MortgageCalc.minDown) return Math.round(MortgageCalc.minDown(program, occ, credit) * 1000) / 10;
+    if (program === 'conventional') return occ === 'investment' ? 15 : occ === 'second' ? 10 : 5;
+    var map = { conventional_fthb: 3, fha: 3.5, va: 0, usda: 0, jumbo: occ === 'primary' ? 10 : 20, land: 20 };
+    return map[program] != null ? map[program] : 5;
+  }
+  // DPA is for primary-residence, first-time buyers only.
+  function dpaAllowed() { return state.loanPurpose === 'purchase' && (state.occupancy || 'primary') === 'primary' && state.ownedRecently === false; }
 
   function updateProgGrid() {
     var eligible = getEligiblePrograms();
@@ -147,9 +186,16 @@
     if (elig && !elig.ok) {
       selectProgram('conventional');
     }
-    // Show/hide FTHB on income step
+    // FTHB is now derived from the page-1 ownership question — hide the manual box.
     var fthbWrap = $('firstTimeBuyerWrap');
-    if (fthbWrap) fthbWrap.style.display = state.isOwner ? 'none' : 'inline-flex';
+    if (fthbWrap) fthbWrap.style.display = 'none';
+    // DPA toggle only for primary-residence first-time buyers.
+    var dpaWrap = $('dpaToggleWrap');
+    if (dpaWrap) {
+      var allowed = dpaAllowed();
+      dpaWrap.style.display = allowed ? 'inline-flex' : 'none';
+      if (!allowed && state.dpa) { state.dpa = false; if ($('dpaToggle')) $('dpaToggle').checked = false; updateDPA(); }
+    }
   }
 
   /* ====== Down payment hint from program ====== */
@@ -157,21 +203,17 @@
     var note = $('progDownPayNote');
     var hint = $('downPayHint');
     if (!note) return;
-    var minDownMap = { conventional: 5, conventional_fthb: 3, fha: 3.5, va: 0, usda: 0, jumbo: 10, land: 20 };
     var progLabels = { conventional: 'Conventional', conventional_fthb: 'First-Time Buyer (Conv. 97)', fha: 'FHA', va: 'VA', usda: 'USDA', jumbo: 'Jumbo', land: 'Land / Lot' };
-    var min = minDownMap[state.program];
+    var min = minDownFor(state.program);
     var label = progLabels[state.program];
+    var occNote = (state.occupancy === 'investment') ? ' (investment property)' : (state.occupancy === 'second') ? ' (second home)' : '';
     if (min === 0) {
       note.innerHTML = '✓ <b>' + label + '</b> allows <b>0% down</b>. You may still choose to put money down to lower your payment or rate.';
-      note.style.display = 'flex';
-    } else if (min === 3 || min === 3.5) {
-      note.innerHTML = '✓ <b>' + label + '</b> requires as little as <b>' + min + '% down</b>. You can always put more down.';
-      note.style.display = 'flex';
     } else {
-      note.innerHTML = '✓ <b>' + label + '</b> requires a minimum of <b>' + min + '% down</b>.';
-      note.style.display = 'flex';
+      note.innerHTML = '✓ <b>' + label + '</b>' + occNote + ' requires a minimum of <b>' + min + '% down</b>.';
     }
-    if (hint) hint.textContent = 'Minimum for ' + label + ': ' + min + '%. Enter a percentage — we\'ll compute the dollar amount and LTV.';
+    note.style.display = 'flex';
+    if (hint) hint.textContent = 'Minimum for ' + label + occNote + ': ' + min + '%. Enter a percentage — we\'ll compute the dollar amount and LTV.';
   }
 
   /* ====== Jumbo validation on property step ====== */
@@ -191,9 +233,13 @@
   function validateDownPayment() {
     var el = $('downPayValidation');
     if (!el) return;
+    if (state.loanPurpose === 'refinance') { el.style.display = 'none'; return; } // refi validated via LTV
     var pct = num($('downPct') ? $('downPct').value : 0);
-    var rule = Calc.programRules(state.program, { firstTimeBuyer: $('firstTimeBuyer') && $('firstTimeBuyer').checked });
-    var minPct = rule.minDown * 100;
+    var rule = Calc.programRules(state.program, {
+      firstTimeBuyer: isFirstTimeBuyer(), occupancy: state.occupancy,
+      creditScore: num($('creditScore') ? $('creditScore').value : 0)
+    });
+    var minPct = Math.round(rule.minDown * 1000) / 10;
     if (pct > 0 && pct < minPct) {
       el.innerHTML = '⚠️ <b>' + rule.label + '</b> requires a minimum of <b>' + minPct + '% down</b>. Please increase your down payment.';
       el.style.display = 'flex';
@@ -206,9 +252,15 @@
   function income() {
     var i = num($('income') ? $('income').value : 0);
     if (state.appType === 'joint') i += num($('coIncome') ? $('coIncome').value : 0);
+    i += gatherREO().incomeAdd;   // + net positive rental income (75% rule)
     return i;
   }
   function loanAmount() {
+    if (state.loanPurpose === 'refinance') {
+      readRefiInputs();
+      var co = state.refi.type === 'cash_out' ? state.refi.cashOut : 0;
+      return Math.max(0, state.refi.payoff + co);
+    }
     var price = num($('purchasePrice') ? $('purchasePrice').value : 0);
     var downPct = num($('downPct') ? $('downPct').value : 0) / 100;
     return Math.max(0, price - price * downPct);
@@ -219,7 +271,33 @@
       d.excluded = d.few || d.medical;
       if (!d.excluded) total += num(d.payment);
     });
+    total += gatherREO().debtAdd;  // + retained-property PITI / negative rental
     return total;
+  }
+  // Real-estate-owned: per-property PITI and how each affects qualifying numbers.
+  //  • Keeping (not rented): full PITI counts as a monthly liability.
+  //  • Renting out: net rental = 75% of gross rent − PITI. Positive adds to
+  //    income; negative adds to liabilities (Fannie Mae rental-income rule).
+  //  • Selling before/at closing: excluded (proof of closing required).
+  function reoPITI(p) {
+    var balance = num(p.balance), rate = num(p.rate);
+    var pi = (balance > 0 && rate > 0) ? Calc.principalAndInterest(balance, rate, 30) : 0;
+    return pi + num(p.tax) + num(p.ins) + num(p.mi);
+  }
+  function gatherREO() {
+    var debtAdd = 0, incomeAdd = 0, totalPITI = 0;
+    (state.reos || []).forEach(function (p) {
+      var piti = reoPITI(p);
+      totalPITI += piti;
+      if (p.disposition === 'sell') return;                 // excluded
+      if (p.disposition === 'rent') {
+        var net = 0.75 * num(p.rent) - piti;
+        if (net >= 0) incomeAdd += net; else debtAdd += -net;
+      } else {                                              // 'keep'
+        debtAdd += piti;
+      }
+    });
+    return { debtAdd: Math.round(debtAdd), incomeAdd: Math.round(incomeAdd), totalPITI: Math.round(totalPITI), count: (state.reos || []).length };
   }
   function gatherAssets() {
     return state.assets.reduce(function (s, a) { return s + num(a.value); }, 0);
@@ -306,28 +384,54 @@
 
   /* ====== Calc payload ====== */
   function calcPayload() {
-    var price = num($('purchasePrice') ? $('purchasePrice').value : 0);
-    var downPct = num($('downPct') ? $('downPct').value : 0);
     var term = state.termYears;
     var baseRate = state.selectedRate ? state.selectedRate.rate : defaultRate();
     var effectiveRate = baseRate + dpaRatePremium();
-    return {
+    var common = {
       program: state.program,
-      purchasePrice: price,
-      downPaymentPct: downPct,
       interestRate: effectiveRate,
       termYears: term,
       creditScore: num($('creditScore') ? $('creditScore').value : 0),
       grossMonthlyIncome: income(),
       monthlyDebts: gatherDebts(),
-      hoaMonthly: num($('hoaMonthly') ? $('hoaMonthly').value : 0),
       taxRatePct: state.taxRatePct || Tax.STATEWIDE_DEFAULT,
       vaUse: $('vaUse') ? $('vaUse').value : 'first',
       vaFundingFeeExempt: $('vaExempt') ? $('vaExempt').checked : false,
-      dpaAmount: state.dpa ? num($('dpaAmount') ? $('dpaAmount').value : 0) : 0,
-      firstTimeBuyer: $('firstTimeBuyer') ? $('firstTimeBuyer').checked : false,
+      discountPoints: state.selectedRate ? (+state.selectedRate.points || 0) : 0,
+      occupancy: state.occupancy,
+      loanPurpose: state.loanPurpose,
     };
+    if (state.loanPurpose === 'refinance') {
+      readRefiInputs();
+      return Object.assign(common, {
+        mode: 'refinance',
+        homeValue: state.refi.value,
+        payoff: state.refi.payoff,
+        refiType: state.refi.type,
+        cashOut: state.refi.type === 'cash_out' ? state.refi.cashOut : 0,
+        financeClosingCosts: state.refi.financeCosts,
+        hoaMonthly: num($('refiHoa') ? $('refiHoa').value : 0),
+        firstTimeBuyer: false,
+      });
+    }
+    return Object.assign(common, {
+      purchasePrice: num($('purchasePrice') ? $('purchasePrice').value : 0),
+      downPaymentPct: num($('downPct') ? $('downPct').value : 0),
+      hoaMonthly: num($('hoaMonthly') ? $('hoaMonthly').value : 0),
+      dpaAmount: state.dpa ? num($('dpaAmount') ? $('dpaAmount').value : 0) : 0,
+      firstTimeBuyer: isFirstTimeBuyer(),
+    });
   }
+  function readRefiInputs() {
+    state.refi.value = num($('refiValue') ? $('refiValue').value : 0);
+    state.refi.payoff = num($('refiPayoff') ? $('refiPayoff').value : 0);
+    state.refi.cashOut = num($('refiCashOut') ? $('refiCashOut').value : 0);
+    var rt = document.querySelector('input[name=refiType]:checked');
+    state.refi.type = rt ? rt.value : 'rate_term';
+    state.refi.financeCosts = $('refiFinanceCosts') ? $('refiFinanceCosts').checked : true;
+  }
+  // First-time buyer = no ownership in the last 3 years (the real IRS/agency test).
+  function isFirstTimeBuyer() { return state.ownedRecently === false; }
   function defaultRate() {
     var grid = Market.rateGrid(state.program, state.termYears, num($('creditScore') ? $('creditScore').value : 0));
     return grid.rows[2].rate;
@@ -357,9 +461,18 @@
     if (r.price > 0) {
       setMetric('m-ltv', r.ltv + '%', r.ltv <= 80 ? 'good' : r.ltv <= 95 ? 'warn' : 'bad');
     } else setMetric('m-ltv', '—');
-    setMetric('m-ctc', r.price ? fmt(r.cashToClose) : '$0');
+    // For a cash-out refinance, the meaningful figure is cash TO the borrower.
+    if (r.mode === 'refinance' && r.refiType === 'cash_out') {
+      setMetric('m-ctc', r.price ? fmt(r.cashToBorrower) : '$0');
+      var lbl = document.querySelector('[data-metric-label="ctc"]'); if (lbl) lbl.textContent = 'Cash to you';
+    } else {
+      setMetric('m-ctc', r.price ? fmt(r.cashToClose) : '$0');
+      var lbl2 = document.querySelector('[data-metric-label="ctc"]'); if (lbl2) lbl2.textContent = 'Cash to close';
+    }
     updateJumboWarning();
     updateDTIBanners(r);
+    renderReoSummary();
+    if (state.loanPurpose === 'refinance') updateRefi();
     updateDrawer();
     return r;
   }
@@ -505,6 +618,60 @@
     return wrap;
   }
 
+  /* ====== Real estate owned (REO) — current/other homes ====== */
+  function propertyRow(p) {
+    var wrap = document.createElement('div'); wrap.className = 'reo-card';
+    wrap.innerHTML =
+      '<div class="reo-grid">' +
+        '<label class="field" style="margin:0;grid-column:1/-1"><span>Property address</span><input class="p-addr" placeholder="Street, City, State ZIP"></label>' +
+        '<label class="field inline-prefix" style="margin:0"><span>Estimated value</span><span class="adorn">$</span><input class="p-val" inputmode="numeric"></label>' +
+        '<label class="field inline-prefix" style="margin:0"><span>Mortgage balance</span><span class="adorn">$</span><input class="p-bal" inputmode="numeric"></label>' +
+        '<label class="field inline-suffix" style="margin:0"><span>Interest rate</span><input class="p-rate" inputmode="decimal"><span class="adorn-r">%</span></label>' +
+        '<label class="field inline-prefix" style="margin:0"><span>Property tax /mo</span><span class="adorn">$</span><input class="p-tax" inputmode="numeric"></label>' +
+        '<label class="field inline-prefix" style="margin:0"><span>Insurance /mo</span><span class="adorn">$</span><input class="p-ins" inputmode="numeric"></label>' +
+        '<label class="field inline-prefix" style="margin:0"><span>PMI/MIP /mo</span><span class="adorn">$</span><input class="p-mi" inputmode="numeric"></label>' +
+        '<label class="field" style="margin:0"><span>What will you do with it?</span><select class="p-disp">' +
+          '<option value="keep">Keep it (not renting)</option>' +
+          '<option value="rent">Rent it out</option>' +
+          '<option value="sell">Selling before closing</option></select></label>' +
+        '<label class="field inline-prefix p-rentwrap" style="margin:0;display:none"><span>Expected monthly rent</span><span class="adorn">$</span><input class="p-rent" inputmode="numeric"></label>' +
+      '</div>' +
+      '<div class="reo-foot"><span class="reo-eff"></span><button class="x" title="Remove">✕ Remove property</button></div>';
+    var q = function (s) { return wrap.querySelector(s); };
+    q('.p-addr').value = p.address || ''; q('.p-val').value = p.value || ''; q('.p-bal').value = p.balance || '';
+    q('.p-rate').value = p.rate || ''; q('.p-tax').value = p.tax || ''; q('.p-ins').value = p.ins || '';
+    q('.p-mi').value = p.mi || ''; q('.p-disp').value = p.disposition || 'keep'; q('.p-rent').value = p.rent || '';
+    function sync() {
+      p.address = q('.p-addr').value; p.value = q('.p-val').value; p.balance = q('.p-bal').value;
+      p.rate = q('.p-rate').value; p.tax = q('.p-tax').value; p.ins = q('.p-ins').value;
+      p.mi = q('.p-mi').value; p.disposition = q('.p-disp').value; p.rent = q('.p-rent').value;
+      q('.p-rentwrap').style.display = p.disposition === 'rent' ? '' : 'none';
+      var piti = reoPITI(p);
+      var eff = q('.reo-eff');
+      if (p.disposition === 'sell') eff.innerHTML = 'Excluded from DTI (selling before closing). Est. payment ' + fmt(piti) + '/mo.';
+      else if (p.disposition === 'rent') {
+        var net = 0.75 * num(p.rent) - piti;
+        eff.innerHTML = 'Est. payment ' + fmt(piti) + '/mo · 75% of rent ' + fmt(0.75 * num(p.rent)) + ' → ' +
+          (net >= 0 ? '<b style="color:var(--green-700)">+' + fmt(net) + '/mo income</b>' : '<b style="color:var(--red)">' + fmt(net) + '/mo added to debts</b>');
+      } else eff.innerHTML = 'Est. payment <b>' + fmt(piti) + '/mo</b> counts as a monthly debt (you are keeping it).';
+      recompute();
+    }
+    wrap.querySelectorAll('input,select').forEach(function (el) { el.addEventListener('input', sync); el.addEventListener('change', sync); });
+    q('.x').addEventListener('click', function () { state.reos = state.reos.filter(function (x) { return x !== p; }); wrap.remove(); renderReoSummary(); recompute(); });
+    sync();
+    return wrap;
+  }
+  function renderReoSummary() {
+    var el = $('reoSummary'); if (!el) return;
+    var g = gatherREO();
+    if (!g.count) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    var parts = [];
+    if (g.incomeAdd) parts.push('<b style="color:var(--green-700)">+' + fmt(g.incomeAdd) + '/mo</b> net rental income');
+    if (g.debtAdd) parts.push('<b>' + fmt(g.debtAdd) + '/mo</b> added to monthly debts');
+    el.innerHTML = g.count + ' propert' + (g.count === 1 ? 'y' : 'ies') + ': ' + (parts.join(' · ') || 'no DTI impact');
+  }
+
   /* ====== Rate grid ====== */
   function buildRateGrid() {
     var term = state.termYears;
@@ -542,7 +709,7 @@
   function buildReview() {
     var p = calcPayload(); var r = Calc.calculate(p);
     var q = Calc.qualify(r, {
-      program: state.program, creditScore: p.creditScore, firstTimeBuyer: p.firstTimeBuyer,
+      program: state.program, creditScore: p.creditScore, firstTimeBuyer: p.firstTimeBuyer, occupancy: state.occupancy,
       maxBackDTI: MAX_BACK_DTI[state.program] || 50,
     });
     var v = $('verdict');
@@ -556,14 +723,38 @@
     }
     var dpaLabel = state.dpa ? ' + DPA (' + ($('dpaProgram') ? $('dpaProgram').options[$('dpaProgram').selectedIndex].text.split('—')[0].trim() : 'DPA') + ')' : '';
     var selectedRateVal = state.selectedRate ? (state.selectedRate.rate + dpaRatePremium()).toFixed(3) : defaultRate().toFixed(3);
-    var rows = [
+    var rateRow = ['Rate / APR', selectedRateVal + '% / ' + (parseFloat(selectedRateVal) + 0.12).toFixed(2) + '%'];
+    var rows;
+    if (r.mode === 'refinance') {
+      rows = [
+        ['Loan purpose', r.refiType === 'cash_out' ? 'Cash-out refinance' : 'Rate & term refinance'],
+        ['Program', Calc.programRules(state.program, {}).label],
+        ['Loan term', state.termYears + '-year fixed'],
+        ['Estimated home value', fmt(r.homeValue)],
+        ['Current payoff', fmt(r.payoff)],
+        ['Equity', fmt(r.equity)],
+        (r.refiType === 'cash_out' ? ['Cash out requested', fmt(r.cashOut)] : null),
+        ['New loan amount', fmt(r.baseLoan)],
+        rateRow,
+        ['Principal & interest', fmt(r.pi) + '/mo'],
+        ['Property tax', fmt(r.monthlyTax) + '/mo (' + (state.taxCounty || 'TX') + ')'],
+        ['Homeowners insurance', fmt(r.monthlyInsurance) + '/mo'],
+        ['Mortgage insurance / MI', r.monthlyMI ? fmt(r.monthlyMI) + '/mo' : 'none'],
+        ['HOA', r.hoaMonthly ? fmt(r.hoaMonthly) + '/mo' : '—'],
+        ['Total monthly payment', fmt(r.totalMonthly) + '/mo'],
+        ['Front / back DTI', r.frontDTI + '% / ' + r.backDTI + '%'],
+        ['LTV (max ' + r.ltvCap + '%)', r.ltv + '%' + (r.ltvOver ? ' ⚠ over limit' : '')],
+        (r.refiType === 'cash_out' ? ['Estimated cash to you', fmt(r.cashToBorrower)] : ['Estimated cash to close', fmt(r.cashToClose)]),
+      ].filter(Boolean);
+    } else {
+      rows = [
       ['Program', Calc.programRules(state.program, {}).label + dpaLabel],
       ['Loan term', state.termYears + '-year fixed'],
       ['Purchase price', fmt(r.price)],
       ['Down payment', fmt(r.downPayment) + ' (' + r.downPct + '%)'],
       ['Base loan amount', fmt(r.baseLoan)],
       ['Financed fee (UFMIP/VA/USDA)', r.financedFee ? fmt(r.financedFee) : '—'],
-      ['Rate / APR', selectedRateVal + '% / ' + (parseFloat(selectedRateVal) + 0.12).toFixed(2) + '%'],
+      rateRow,
       ['Principal & interest', fmt(r.pi) + '/mo'],
       ['Property tax', fmt(r.monthlyTax) + '/mo (' + (state.taxCounty || 'TX') + ')'],
       ['Homeowners insurance', fmt(r.monthlyInsurance) + '/mo'],
@@ -574,7 +765,8 @@
       ['Front / back DTI', r.frontDTI + '% / ' + r.backDTI + '%'],
       ['LTV', r.ltv + '%'],
       ['Estimated cash to close (incl. closing costs)', fmt(r.cashToClose)],
-    ];
+      ];
+    }
     $('reviewLines').innerHTML = rows.map(function (x) {
       return '<div class="summary-line"><span>' + x[0] + '</span><b>' + x[1] + '</b></div>';
     }).join('');
@@ -645,50 +837,93 @@
       },
       loan: p, result: r,
       program: state.program, termYears: state.termYears, dpa: state.dpa,
-      debts: state.debts, assets: state.assets,
+      loanPurpose: state.loanPurpose, occupancy: state.occupancy, ownedRecently: state.ownedRecently,
+      refi: state.refi,
+      debts: state.debts, assets: state.assets, reos: state.reos,
+      reoSummary: gatherREO(),
       selectedRate: state.selectedRate, taxCounty: state.taxCounty,
       maxQualifiedPrice: Calc.maxAffordablePrice(Object.assign({}, p, { maxBackDTI: 45 })),
     };
   }
+  // Robustly read a fetch response as JSON even if the server returned HTML.
+  function readJson(res) {
+    return res.text().then(function (t) {
+      var j = {}; try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { error: 'Unexpected server response.' }; }
+      return { ok: res.ok, status: res.status, j: j };
+    });
+  }
+  function showProcessing() {
+    $('decisionProcessing').style.display = '';
+    $('decisionResult').style.display = 'none';
+    $('decisionOverlay').classList.add('open');
+  }
+  function showDecision(approved, reasons) {
+    $('decisionProcessing').style.display = 'none';
+    $('decisionResult').style.display = '';
+    if (approved) {
+      $('decisionIcon').textContent = '✅';
+      $('decisionTitle').textContent = 'Pre-qualification approved';
+      $('decisionBody').innerHTML = 'Congratulations — based on what you entered, this scenario meets typical guidelines. ' +
+        'This is an estimate, not a commitment to lend; final approval requires full documentation, a credit pull, and underwriting.';
+    } else {
+      $('decisionIcon').textContent = '📋';
+      $('decisionTitle').textContent = 'Submitted — needs a closer look';
+      $('decisionBody').innerHTML = 'Your application is saved. A loan officer will review these items with you:<br>' +
+        '<span style="display:inline-block;text-align:left;margin-top:8px;font-size:13.5px">• ' +
+        (reasons && reasons.length ? reasons.join('<br>• ') : 'Manual review of your scenario.') + '</span>';
+    }
+  }
+  function closeDecisionToPortal() { window.location.href = '/portal.html'; }
+
   function submit() {
     var msg = $('submitMsg');
+    if (!$('consent').checked) { msg.style.color = 'var(--red)'; msg.textContent = 'Please acknowledge the estimate disclaimer to continue.'; return; }
 
-    // Logged-in user editing their saved application — no new account needed.
+    var app = snapshot();
+    // Automated decision from the same engine driving the live numbers.
+    var p = calcPayload();
+    var qz = Calc.qualify(Calc.calculate(p), {
+      program: state.program, creditScore: p.creditScore, firstTimeBuyer: p.firstTimeBuyer, occupancy: state.occupancy,
+      maxBackDTI: MAX_BACK_DTI[state.program] || 50,
+    });
+
+    var path, body;
     if (isAuthed) {
-      if (!$('consent').checked) { msg.style.color = 'var(--red)'; msg.textContent = 'Please acknowledge the estimate disclaimer to continue.'; return; }
-      msg.style.color = 'var(--slate)'; msg.textContent = 'Saving your changes…';
-      fetch('/api/application', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin', body: JSON.stringify({ application: snapshot() })
-      }).then(function (res) { return res.json().then(function (j) { return { ok: res.ok, j: j }; }); })
-        .then(function (o) {
-          if (!o.ok) { msg.style.color = 'var(--red)'; msg.textContent = o.j.error || 'Could not save.'; return; }
-          msg.style.color = 'var(--green-700)'; msg.textContent = 'Saved ✓';
-          window.location.href = '/portal.html';
-        }).catch(function () {
-          msg.style.color = 'var(--red)'; msg.textContent = 'Could not reach the server — please try again.';
-        });
-      return;
+      path = '/api/application';
+      body = { application: app };
+    } else {
+      var email = $('acctEmail').value.trim(), pw = $('acctPassword').value;
+      if (!email || pw.length < 8) { msg.style.color = 'var(--red)'; msg.textContent = 'Enter an email and a password of at least 8 characters.'; return; }
+      path = '/api/register-and-submit';
+      body = { email: email, password: pw, application: app };
     }
 
-    var email = $('acctEmail').value.trim(), pw = $('acctPassword').value;
-    if (!email || pw.length < 8) { msg.style.color = 'var(--red)'; msg.textContent = 'Enter an email and a password of at least 8 characters.'; return; }
-    if (!$('consent').checked) { msg.style.color = 'var(--red)'; msg.textContent = 'Please acknowledge the estimate disclaimer to continue.'; return; }
-    msg.style.color = 'var(--slate)'; msg.textContent = 'Creating your account…';
-    var payload = { email: email, password: pw, application: snapshot() };
-    fetch('/api/register-and-submit', {
+    msg.textContent = '';
+    showProcessing();
+    var started = Date.now();
+    fetch(path, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload), credentials: 'same-origin'
-    }).then(function (res) { return res.json().then(function (j) { return { ok: res.ok, j: j }; }); })
-      .then(function (o) {
-        if (!o.ok) { msg.style.color = 'var(--red)'; msg.textContent = o.j.error || 'Something went wrong.'; return; }
-        $('saveState').textContent = 'Saved ✓';
-        // Account created + session established on the server → go to the portal.
-        window.location.href = '/portal.html';
-      }).catch(function () {
+      credentials: 'same-origin', body: JSON.stringify(body)
+    }).then(readJson).then(function (o) {
+      // hold the "processing" view for a beat so it reads as a real review
+      var wait = Math.max(0, 1600 - (Date.now() - started));
+      setTimeout(function () {
+        if (!o.ok) {
+          $('decisionOverlay').classList.remove('open');
+          msg.style.color = 'var(--red)';
+          msg.textContent = (o.j && o.j.error) || ('Could not submit (error ' + o.status + '). Please try again.');
+          return;
+        }
+        showDecision(qz.eligible, qz.reasons);
+      }, wait);
+    }).catch(function () {
+      var wait = Math.max(0, 1200 - (Date.now() - started));
+      setTimeout(function () {
+        $('decisionOverlay').classList.remove('open');
         msg.style.color = 'var(--red)';
-        msg.textContent = 'Could not reach the server — your account was not created. Please try again.';
-      });
+        msg.textContent = 'Could not reach the server — please make sure it is running and try again.';
+      }, wait);
+    });
   }
 
   /* ====== Load an existing application ("bring up the application I just did") ====== */
@@ -701,18 +936,76 @@
     if (el) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
   }
   function bootExisting() {
+    var params = (function () { try { return new URLSearchParams(location.search); } catch (e) { return { get: function () { return null; } }; } })();
+    var editPurpose = params.get('purpose');
     fetch('/api/me', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (me) {
-        if (me && me.user) isAuthed = true;
-        return fetch('/api/application', { credentials: 'same-origin' })
-          .then(function (r) { return r.ok ? r.json() : { application: null }; });
-      })
-      .then(function (j) {
-        var app = j && j.application;
-        if (app && app.loan) { prefillFromApplication(app); }
+        if (!(me && me.user)) return null;       // not logged in → normal new-account flow
+        isAuthed = true;
+        applyAuthedUI();
+        return fetch('/api/applications', { credentials: 'same-origin' })
+          .then(function (r) { return r.ok ? r.json() : { applications: [] }; })
+          .then(function (list) {
+            var apps = (list && list.applications) || [];
+            disableUsedPurposes(apps, editPurpose);
+            if (editPurpose) {
+              // Editing a specific product → load it fully.
+              return fetch('/api/application?purpose=' + encodeURIComponent(editPurpose), { credentials: 'same-origin' })
+                .then(function (r) { return r.ok ? r.json() : { application: null }; })
+                .then(function (j) {
+                  if (j && j.application && j.application.loan) prefillFromApplication(j.application);
+                  else if (apps.length) offerAutofill();
+                });
+            }
+            // New application → offer to reuse personal info from a prior one.
+            if (apps.length) offerAutofill();
+          });
       })
       .catch(function () {});
+  }
+  // Logged-in users never see the "create an account" card again.
+  function applyAuthedUI() {
+    var card = $('accountCard');
+    if (card) {
+      var h = card.querySelector('h3'); if (h) h.textContent = "You're signed in";
+      var sub = card.querySelector('.sub'); if (sub) sub.innerHTML = 'This application will be saved to your account. <a href="/portal.html" style="color:var(--green-700)">Go to your portal</a>.';
+      var grid = card.querySelector('.grid-2'); if (grid) grid.style.display = 'none';
+    }
+    var btn = $('submitApp'); if (btn) btn.textContent = 'Submit application →';
+  }
+  // Can't have two applications for the same product — disable taken purposes.
+  function disableUsedPurposes(apps, editing) {
+    var used = {}; apps.forEach(function (a) { used[a.purpose] = true; });
+    document.querySelectorAll('input[name=loanPurpose]').forEach(function (inp) {
+      if (used[inp.value] && inp.value !== editing) {
+        inp.disabled = true;
+        var lbl = inp.closest('.choice'); if (lbl) { lbl.style.opacity = '.45'; lbl.title = 'You already have a ' + inp.value.replace('_', ' ') + ' application — edit it from your portal.'; }
+        // if the (default) selected purpose is taken, move to the first free one
+        if (inp.checked) {
+          var free = Array.prototype.filter.call(document.querySelectorAll('input[name=loanPurpose]'), function (x) { return !used[x.value]; })[0];
+          if (free) { free.checked = true; free.dispatchEvent(new Event('change', { bubbles: true })); }
+        }
+      }
+    });
+  }
+  function offerAutofill() {
+    var b = $('autofillBanner'); if (!b) return;
+    b.style.display = '';
+    $('autofillUse').onclick = function () {
+      fetch('/api/profile', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          var pr = (j && j.profile) || {};
+          setVal('firstName', pr.firstName); setVal('lastName', pr.lastName);
+          setVal('email', pr.email); setVal('phone', pr.phone); setVal('dob', pr.dob);
+          setVal('curAddress', pr.currentAddress);
+          setVal('income', pr.grossMonthlyIncome); setVal('creditScore', pr.creditScore);
+          b.style.display = 'none';
+          recompute();
+        }).catch(function () { b.style.display = 'none'; });
+    };
+    $('autofillSkip').onclick = function () { b.style.display = 'none'; };
   }
 
   function prefillFromApplication(app) {
@@ -724,6 +1017,20 @@
     setVal('email', prof.email); setVal('phone', prof.phone); setVal('dob', prof.dob);
     setVal('curAddress', prof.currentAddress); setVal('desiredAddress', prof.desiredAddress);
     if (prof.ownRent) setRadio('ownRent', prof.ownRent);
+
+    // Purpose / occupancy / ownership
+    if (app.loanPurpose) { setRadio('loanPurpose', app.loanPurpose); state.loanPurpose = app.loanPurpose; }
+    if (app.occupancy) { setRadio('occupancy', app.occupancy); state.occupancy = app.occupancy; }
+    if (app.ownedRecently != null) { setRadio('ownedRecently', app.ownedRecently ? 'yes' : 'no'); state.ownedRecently = app.ownedRecently; }
+    // Refinance fields
+    if (app.refi) {
+      state.refi = Object.assign({ value: 0, payoff: 0, type: 'rate_term', cashOut: 0, financeCosts: true }, app.refi);
+      setVal('refiValue', state.refi.value); setVal('refiPayoff', state.refi.payoff); setVal('refiCashOut', state.refi.cashOut);
+      setRadio('refiType', state.refi.type);
+      if ($('refiFinanceCosts')) $('refiFinanceCosts').checked = state.refi.financeCosts !== false;
+      var rzip = (app.context && app.context.lookingZip) || prof.lookingZip;
+      if (rzip && $('refiZip')) $('refiZip').value = rzip;
+    }
 
     // Program + term + DPA
     state.termYears = loan.termYears || app.termYears || 30;
@@ -743,30 +1050,22 @@
     setVal('creditScore', loan.creditScore || '');
     setVal('dpaAmount', loan.dpaAmount || '');
 
-    // Debts & assets
+    // Debts, assets, properties owned
     state.debts = []; if ($('debtList')) $('debtList').innerHTML = '';
     (app.debts || []).forEach(function (d) { var c = Object.assign({}, d); state.debts.push(c); $('debtList').appendChild(debtRow(c)); });
     state.assets = []; if ($('assetList')) $('assetList').innerHTML = '';
     (app.assets || []).forEach(function (a) { var c = Object.assign({}, a); state.assets.push(c); $('assetList').appendChild(assetRow(c)); });
+    state.reos = []; if ($('reoList')) $('reoList').innerHTML = '';
+    (app.reos || []).forEach(function (p) { var c = Object.assign({}, p); state.reos.push(c); $('reoList').appendChild(propertyRow(c)); });
 
     // Rate selection + tax
     if (app.selectedRate) state.selectedRate = app.selectedRate;
     if (zip) { updateTax(); }
     else if (loan.taxRatePct) { state.taxRatePct = loan.taxRatePct; state.taxCounty = app.taxCounty || null; }
 
-    // Account area: editing, not creating
-    if (isAuthed) {
-      var card = $('accountCard');
-      if (card) {
-        card.querySelector('h3').textContent = 'Save your changes';
-        card.querySelector('.sub').innerHTML = "You're signed in — updating the application on file. " +
-          '<a href="/portal.html" style="color:var(--green-700)">Go to your portal</a>.';
-        var grid = card.querySelector('.grid-2'); if (grid) grid.style.display = 'none';
-      }
-      if ($('acctEmail')) $('acctEmail').value = prof.email || '';
-      var btn = $('submitApp'); if (btn) btn.textContent = 'Save changes →';
-    }
+    if (isAuthed) { applyAuthedUI(); var btn = $('submitApp'); if (btn) btn.textContent = 'Save changes →'; }
 
+    updateProgGrid(); updateOccupancyVisibility(); updatePurposeSections();
     recompute();
     showStep(6); // jump straight to the review of what was submitted
   }
@@ -797,6 +1096,34 @@
           state.usdaAreaStatus = ua ? ua.value : 'unknown';
           updateProgGrid();
         }
+        if (name === 'loanPurpose') {
+          var lp = document.querySelector('input[name=loanPurpose]:checked');
+          state.loanPurpose = lp ? lp.value : 'purchase';
+          // Purpose drives occupancy: investment→investment, second home→second,
+          // purchase/refinance→primary (and the selector is shown for those).
+          if (state.loanPurpose === 'investment') state.occupancy = 'investment';
+          else if (state.loanPurpose === 'second_home') state.occupancy = 'second';
+          else state.occupancy = 'primary';
+          syncOccupancyRadios();
+          updateOccupancyVisibility();
+          updatePurposeSections();
+          updateProgGrid();
+        }
+        if (name === 'occupancy') {
+          var oc = document.querySelector('input[name=occupancy]:checked');
+          state.occupancy = oc ? oc.value : 'primary';
+          updateProgGrid();
+        }
+        if (name === 'ownedRecently') {
+          var orr = document.querySelector('input[name=ownedRecently]:checked');
+          state.ownedRecently = orr ? (orr.value === 'yes') : null;
+          updateProgGrid();
+        }
+        if (name === 'refiType') {
+          var rt = document.querySelector('input[name=refiType]:checked');
+          state.refi.type = rt ? rt.value : 'rate_term';
+          updateRefi();
+        }
         if (name === 'termChoice') {
           var tc = document.querySelector('input[name=termChoice]:checked');
           state.termYears = tc ? parseInt(tc.value) : 30;
@@ -806,6 +1133,68 @@
         recompute();
       });
     });
+  }
+  function syncOccupancyRadios() {
+    var el = document.querySelector('input[name=occupancy][value="' + state.occupancy + '"]');
+    if (el) { el.checked = true; var grp = el.closest('[data-choice]'); if (grp) grp.querySelectorAll('.choice').forEach(function (c) { var i = c.querySelector('input'); c.classList.toggle('sel', i && i.checked); }); }
+  }
+  function updateOccupancyVisibility() {
+    var wrap = $('occupancyWrap');
+    if (wrap) wrap.style.display = (state.loanPurpose === 'investment' || state.loanPurpose === 'second_home') ? 'none' : '';
+  }
+  // Show purchase fields vs refinance fields on the property step.
+  function updatePurposeSections() {
+    var refi = state.loanPurpose === 'refinance';
+    var ps = $('purchaseSection'), rs = $('refiSection');
+    if (ps) ps.style.display = refi ? 'none' : '';
+    if (rs) rs.style.display = refi ? '' : 'none';
+    var title = document.querySelector('.panel[data-step="2"] h2');
+    if (title) title.textContent = refi ? 'Your current home & refinance' : 'The property & your down payment';
+    if (refi) updateRefi();
+  }
+  // Refinance: equity, cash-out cap, LTV check, tax from ZIP, summary line.
+  function updateRefi() {
+    if (state.loanPurpose !== 'refinance') return;
+    readRefiInputs();
+    var cw = $('cashOutWrap'); if (cw) cw.style.display = state.refi.type === 'cash_out' ? '' : 'none';
+    // tax from refi ZIP
+    var zip = ($('refiZip') && $('refiZip').value.trim()) || '';
+    if (zip.length === 5 && window.TexasTax) {
+      var t = Tax.estimate(zip);
+      if (t && t.ratePct) {
+        state.taxRatePct = t.ratePct; state.taxCounty = t.county; state.taxSource = 'zip';
+        var tr = $('refiTaxReadout'); if (tr) { tr.style.display = 'block'; tr.innerHTML = '✓ ' + t.county + ' County property tax ≈ <b>' + t.ratePct + '%</b>/yr — applied to your estimate.'; }
+      }
+    }
+    var p = calcPayload(); var r = Calc.calculate(p);
+    var eq = $('refiEquityNote');
+    if (eq && state.refi.value > 0) {
+      eq.style.display = 'block';
+      eq.innerHTML = 'Equity: <b>' + fmt(r.equity) + '</b> · current LTV before refi ≈ <b>' +
+        (state.refi.value ? Math.round(state.refi.payoff / state.refi.value * 100) : 0) + '%</b>.';
+    } else if (eq) eq.style.display = 'none';
+    // cash-out max
+    var capPct = Calc.refiLtvCap(state.program, state.occupancy, state.refi.type);
+    var maxCash = Math.max(0, Math.round(capPct * state.refi.value - state.refi.payoff));
+    var cm = $('refiCashMax');
+    if (cm) cm.innerHTML = state.refi.type === 'cash_out'
+      ? 'Max cash-out at ' + Math.round(capPct * 100) + '% LTV ≈ <b>' + fmt(maxCash) + '</b>'
+      : '';
+    // LTV warning
+    var w = $('refiLtvWarning');
+    if (w) {
+      if (r.ltvOver) { w.style.display = 'block'; w.innerHTML = '⚠️ New loan LTV is <b>' + r.ltv + '%</b>, above the <b>' + r.ltvCap + '%</b> max for this ' + (state.refi.type === 'cash_out' ? 'cash-out ' : '') + 'refinance. Reduce cash-out or choose another program.'; }
+      else w.style.display = 'none';
+    }
+    // summary
+    var s = $('refiSummary');
+    if (s && state.refi.value > 0) {
+      s.style.display = 'block';
+      var line = 'New loan <b>' + fmt(r.baseLoan) + '</b> · LTV <b>' + r.ltv + '%</b> · new payment <b>' + fmt(r.totalMonthly) + '/mo</b>';
+      if (state.refi.type === 'cash_out') line += ' · cash to you ≈ <b>' + fmt(r.cashToBorrower) + '</b>';
+      else line += ' · cash to close ≈ <b>' + fmt(r.cashToClose) + '</b>';
+      s.innerHTML = line;
+    } else if (s) s.style.display = 'none';
   }
 
   /* ====== Exit guard ======
@@ -872,6 +1261,12 @@
       tryAddressLookup();
     });
 
+    // Refinance inputs
+    ['refiValue', 'refiPayoff', 'refiCashOut', 'refiZip', 'refiHoa'].forEach(function (id) {
+      var e = $(id); if (e) e.addEventListener('input', recompute);
+    });
+    var rfc = $('refiFinanceCosts'); if (rfc) rfc.addEventListener('change', recompute);
+
     // Program tiles
     document.querySelectorAll('#progGrid .prog').forEach(function (el) {
       el.addEventListener('click', function () {
@@ -888,16 +1283,25 @@
     if ($('vaExempt')) $('vaExempt').addEventListener('change', recompute);
     if ($('vaUse')) $('vaUse').addEventListener('change', recompute);
 
-    // First-time buyer checkbox
-    var ftbEl = $('firstTimeBuyer');
-    if (ftbEl) ftbEl.addEventListener('change', function() {
-      if (this.checked && state.isOwner) { this.checked = false; alert('You indicated you currently own a home, so First-Time Buyer programs are not available.'); return; }
-      recompute();
-    });
+    // First-time buyer is derived from the page-1 ownership question (no manual box).
 
-    // Debt/asset rows
+    // Debt/asset/property rows
     $('addDebt').addEventListener('click', function () { var d = {}; state.debts.push(d); $('debtList').appendChild(debtRow(d)); });
     $('addAsset').addEventListener('click', function () { var a = {}; state.assets.push(a); $('assetList').appendChild(assetRow(a)); });
+    var addProp = $('addProp');
+    if (addProp) addProp.addEventListener('click', function () {
+      var p = { disposition: 'keep' };
+      // prefill the first property's address from the page-1 current address
+      if (!state.reos.length && $('curAddress') && $('curAddress').value) p.address = $('curAddress').value;
+      state.reos.push(p); $('reoList').appendChild(propertyRow(p)); renderReoSummary();
+    });
+
+    // Decision modal → portal
+    var dGo = $('decisionGo'); if (dGo) dGo.addEventListener('click', closeDecisionToPortal);
+
+    // Purpose note + occupancy visibility
+    updateOccupancyVisibility();
+    updatePurposeSections();
 
     // Submit
     $('submitApp').addEventListener('click', submit);

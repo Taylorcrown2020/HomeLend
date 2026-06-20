@@ -69,9 +69,42 @@ function requireAuth(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ error: 'Please log in.' });
   next();
 }
+// async route wrapper so a thrown/rejected handler returns JSON, never an HTML 500
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+const VALID_PURPOSES = ['purchase', 'refinance', 'investment', 'second_home'];
+function purposeOf(application) {
+  var p = application && application.loanPurpose;
+  return VALID_PURPOSES.indexOf(p) !== -1 ? p : 'purchase';
+}
+// Upsert: one application per (user, purpose). Updates in place if it exists.
+function upsertApplication(userId, application) {
+  const purpose = purposeOf(application);
+  const json = JSON.stringify(application);
+  const existing = q.appByPurpose.get(userId, purpose);
+  if (existing) { q.updateApplicationById.run(json, existing.id); return { purpose: purpose, updated: true }; }
+  q.insertApplication.run(userId, purpose, json);
+  return { purpose: purpose, updated: false };
+}
+function appSummary(row) {
+  let a = {};
+  try { a = JSON.parse(row.data_json); } catch (e) {}
+  const loan = a.loan || {}, res = a.result || {}, prof = a.profile || {};
+  return {
+    purpose: row.purpose || 'purchase',
+    status: row.status || 'submitted',
+    createdAt: row.created_at, updatedAt: row.updated_at || row.created_at,
+    program: a.program || loan.program || null,
+    occupancy: a.occupancy || null,
+    applicant: ((prof.firstName || '') + ' ' + (prof.lastName || '')).trim(),
+    purchasePrice: loan.purchasePrice != null ? loan.purchasePrice : (res.price || null),
+    totalMonthly: (a.context && a.context.numbers && a.context.numbers.totalMonthly) || res.totalMonthly || null,
+    maxQualifiedPrice: a.maxQualifiedPrice || null,
+  };
+}
 
 /* ---- Auth ---- */
-app.post('/api/register-and-submit', (req, res) => {
+app.post('/api/register-and-submit', wrap((req, res) => {
   const { email, password, application } = req.body || {};
   if (!email || !password || password.length < 8) return res.status(400).json({ error: 'Valid email and 8+ char password required.' });
   if (q.userByEmail.get(email.toLowerCase())) return res.status(409).json({ error: 'An account with that email already exists. Try logging in.' });
@@ -79,13 +112,13 @@ app.post('/api/register-and-submit', (req, res) => {
   const prof = (application && application.profile) || {};
   const info = q.createUser.run({ email: email.toLowerCase(), hash, first: prof.firstName || null, last: prof.lastName || null, phone: prof.phone || null });
   const userId = info.lastInsertRowid;
-  if (application) q.addApplication.run(userId, JSON.stringify(application));
+  if (application) upsertApplication(userId, application);
   req.session.userId = userId;
   audit(userId, 'register+submit', req);
   res.json({ ok: true, userId });
-});
+}));
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', wrap((req, res) => {
   const { email, password } = req.body || {};
   const user = email ? q.userByEmail.get(String(email).toLowerCase()) : null;
   const ok = user && bcrypt.compareSync(password || '', user.password_hash);
@@ -93,7 +126,7 @@ app.post('/api/login', (req, res) => {
   req.session.userId = user.id;
   audit(user.id, 'login', req);
   res.json({ ok: true });
-});
+}));
 
 app.post('/api/logout', (req, res) => {
   const uid = req.session.userId; audit(uid, 'logout', req);
@@ -106,46 +139,79 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ user: { id: u.id, email: u.email, firstName: u.first_name, lastName: u.last_name } });
 });
 
-/* ---- Application ---- */
-app.get('/api/application', requireAuth, (req, res) => {
-  const row = q.latestApplication.get(req.session.userId);
-  if (!row) return res.json({ application: null });
-  res.json({ application: JSON.parse(row.data_json), status: row.status, createdAt: row.created_at });
-});
+/* ---- Applications (one per loan purpose) ---- */
+// List all of the user's applications (summaries).
+app.get('/api/applications', requireAuth, wrap((req, res) => {
+  const rows = q.listApplications.all(req.session.userId) || [];
+  res.json({ applications: rows.map(appSummary) });
+}));
 
-/* Save a new version of the application for an already-logged-in user
-   (used when editing/resubmitting "My Application"). */
-app.post('/api/application', requireAuth, (req, res) => {
+// Get one application. ?purpose=… returns that product; otherwise the most recent.
+app.get('/api/application', requireAuth, wrap((req, res) => {
+  const purpose = req.query.purpose;
+  const row = (purpose && VALID_PURPOSES.indexOf(purpose) !== -1)
+    ? q.appByPurpose.get(req.session.userId, purpose)
+    : q.latestApplication.get(req.session.userId);
+  if (!row) return res.json({ application: null });
+  res.json({ application: JSON.parse(row.data_json), purpose: row.purpose || 'purchase', status: row.status, createdAt: row.created_at, updatedAt: row.updated_at });
+}));
+
+// Create OR update the application for its loan purpose (no duplicates).
+app.post('/api/application', requireAuth, wrap((req, res) => {
   const { application } = req.body || {};
   if (!application || typeof application !== 'object') return res.status(400).json({ error: 'application required' });
-  q.addApplication.run(req.session.userId, JSON.stringify(application));
-  audit(req.session.userId, 'application-resubmit', req);
-  res.json({ ok: true });
-});
+  const r = upsertApplication(req.session.userId, application);
+  audit(req.session.userId, 'application-save:' + r.purpose, req);
+  res.json({ ok: true, purpose: r.purpose, updated: r.updated });
+}));
 
-/* Merge live shopping context (where you're looking + the home you've selected
-   and its recomputed numbers) into the latest application, without discarding
-   the original submission. Keeps the portal + application in sync with the
-   numbers shown while browsing. */
-app.patch('/api/application/context', requireAuth, (req, res) => {
+// Delete the application for a given purpose (lets the user free up that slot).
+app.delete('/api/application', requireAuth, wrap((req, res) => {
+  const purpose = req.query.purpose;
+  if (!purpose || VALID_PURPOSES.indexOf(purpose) === -1) return res.status(400).json({ error: 'valid purpose required' });
+  const r = q.deleteByPurpose.run(req.session.userId, purpose);
+  audit(req.session.userId, 'application-delete:' + purpose, req);
+  res.json({ ok: true, deleted: (r && r.changes) || 0 });
+}));
+
+// Personal info that can be reused across applications (NO SSN — never stored).
+app.get('/api/profile', requireAuth, wrap((req, res) => {
   const row = q.latestApplication.get(req.session.userId);
+  const u = q.userById.get(req.session.userId);
+  let prof = {}, loan = {};
+  if (row) { try { const a = JSON.parse(row.data_json); prof = a.profile || {}; loan = a.loan || {}; } catch (e) {} }
+  res.json({ profile: {
+    firstName: prof.firstName || (u && u.first_name) || '',
+    lastName: prof.lastName || (u && u.last_name) || '',
+    email: prof.email || (u && u.email) || '',
+    phone: prof.phone || (u && u.phone) || '',
+    dob: prof.dob || '',
+    currentAddress: prof.currentAddress || '',
+    grossMonthlyIncome: loan.grossMonthlyIncome || '',
+    creditScore: loan.creditScore || '',
+  } });
+}));
+
+/* Merge live shopping context into a specific application (by purpose, else latest). */
+app.patch('/api/application/context', requireAuth, wrap((req, res) => {
+  const purpose = req.query.purpose;
+  const row = (purpose && VALID_PURPOSES.indexOf(purpose) !== -1)
+    ? q.appByPurpose.get(req.session.userId, purpose)
+    : q.latestApplication.get(req.session.userId);
   if (!row) return res.status(404).json({ error: 'No application on file yet.' });
   let app;
   try { app = JSON.parse(row.data_json); } catch (e) { return res.status(500).json({ error: 'Stored application is unreadable.' }); }
   const c = req.body && req.body.context;
   if (!c || typeof c !== 'object') return res.status(400).json({ error: 'context required' });
-
   app.context = Object.assign({}, app.context, c);
-  // Mirror into the fields the portal and application read directly.
   app.profile = app.profile || {};
   if (c.lookingZip != null) app.profile.lookingZip = c.lookingZip;
   if (c.taxCounty != null) app.taxCounty = c.taxCounty;
   if (c.taxRatePct != null && app.loan) app.loan.taxRatePct = c.taxRatePct;
-
-  q.updateLatestApplication.run(JSON.stringify(app), req.session.userId);
+  q.updateApplicationById.run(JSON.stringify(app), row.id);
   audit(req.session.userId, 'application-context', req);
   res.json({ ok: true });
-});
+}));
 
 /* ---- Listings ----
    Live for-sale listings come from RentCast when RENTCAST_API_KEY is set and the
@@ -283,5 +349,17 @@ app.get('/api/config', (req, res) => {
 /* ---- Static site ---- */
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+// Unknown API routes → JSON 404 (not an HTML page the client would misread).
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+// Global error handler: ANY thrown/rejected handler returns JSON, so the client
+// always gets a real error message instead of an HTML 500 that looks like a
+// "network error."
+app.use((err, req, res, next) => {
+  console.error('[error]', req.method, req.url, '-', (err && err.message) || err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Server error — please try again.' });
+});
 
 app.listen(PORT, () => console.log(`Keystone running → http://localhost:${PORT}`));
