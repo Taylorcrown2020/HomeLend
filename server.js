@@ -12,7 +12,8 @@ const fs = require('fs');
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const { q } = require('./db');
+const crypto = require('crypto');
+const { q, initDb, backend } = require('./db');
 const Market = require('./public/js/market-data.js');
 
 /* ---- Minimal .env loader (no dependency) ----
@@ -55,18 +56,56 @@ app.use((req, res, next) => { // minimal security headers
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
+// Behind a hosting proxy (Render, Heroku, etc.) Express must trust the proxy so
+// it can tell the original request was HTTPS — otherwise secure cookies break.
+// secure:'auto' then marks the cookie Secure on HTTPS and not-Secure on local
+// http, so the SAME build works in both places without any env tweaking.
+app.set('trust proxy', 1);
+const COOKIE_SECURE = (process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SECURE === 'true') ? true
+                    : (process.env.COOKIE_SECURE === '0' || process.env.COOKIE_SECURE === 'false') ? false
+                    : 'auto';
 app.use(session({
   name: 'ks.sid',
   secret: SESSION_SECRET || 'dev-only-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 1000 * 60 * 60 * 8 },
+  cookie: { httpOnly: true, sameSite: 'lax', secure: COOKIE_SECURE, maxAge: 1000 * 60 * 60 * 8 },
 }));
 
 const ip = (req) => (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
-const audit = (uid, action, req) => { try { q.audit.run(uid || null, action, ip(req)); } catch (e) {} };
+const audit = (uid, action, req) => { try { Promise.resolve(q.audit.run(uid || null, action, ip(req))).catch(() => {}); } catch (e) {} };
+
+// ---- Stateless auth token (belt-and-suspenders fallback for cookies) ----
+// Some hosting/proxy/browser setups drop session cookies. To make login work
+// regardless, login/register also return a signed token the browser stores and
+// sends as "Authorization: Bearer <token>". It's an HMAC of userId+expiry — no
+// server-side store needed, and it can't be forged without SESSION_SECRET.
+const TOKEN_SECRET = SESSION_SECRET || 'dev-only-change-me';
+function signTok(body) { return crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('hex'); }
+function makeToken(userId) {
+  const body = userId + '.' + (Date.now() + 1000 * 60 * 60 * 8); // 8h
+  return Buffer.from(body).toString('base64') + '.' + signTok(body);
+}
+function verifyToken(tok) {
+  if (!tok || typeof tok !== 'string') return null;
+  const parts = tok.split('.');
+  if (parts.length !== 2) return null;
+  let body; try { body = Buffer.from(parts[0], 'base64').toString('utf8'); } catch (e) { return null; }
+  if (signTok(body) !== parts[1]) return null;
+  const seg = body.split('.');
+  const uid = +seg[0], exp = +seg[1];
+  if (!uid || !exp || Date.now() > exp) return null;
+  return uid;
+}
+function currentUserId(req) {
+  if (req.session && req.session.userId) return req.session.userId;
+  const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  return m ? verifyToken(m[1]) : null;
+}
 function requireAuth(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({ error: 'Please log in.' });
+  const uid = currentUserId(req);
+  if (!uid) return res.status(401).json({ error: 'Please log in.' });
+  req.session.userId = uid; // make it available to all downstream handlers
   next();
 }
 // async route wrapper so a thrown/rejected handler returns JSON, never an HTML 500
@@ -78,12 +117,12 @@ function purposeOf(application) {
   return VALID_PURPOSES.indexOf(p) !== -1 ? p : 'purchase';
 }
 // Upsert: one application per (user, purpose). Updates in place if it exists.
-function upsertApplication(userId, application) {
+async function upsertApplication(userId, application) {
   const purpose = purposeOf(application);
   const json = JSON.stringify(application);
-  const existing = q.appByPurpose.get(userId, purpose);
-  if (existing) { q.updateApplicationById.run(json, existing.id); return { purpose: purpose, updated: true }; }
-  q.insertApplication.run(userId, purpose, json);
+  const existing = await q.appByPurpose.get(userId, purpose);
+  if (existing) { await q.updateApplicationById.run(json, existing.id); return { purpose: purpose, updated: true }; }
+  await q.insertApplication.run(userId, purpose, json);
   return { purpose: purpose, updated: false };
 }
 function appSummary(row) {
@@ -104,28 +143,34 @@ function appSummary(row) {
 }
 
 /* ---- Auth ---- */
-app.post('/api/register-and-submit', wrap((req, res) => {
+function publicUser(u) { return { id: u.id, email: u.email, firstName: u.first_name, lastName: u.last_name }; }
+
+app.post('/api/register-and-submit', wrap(async (req, res) => {
   const { email, password, application } = req.body || {};
   if (!email || !password || password.length < 8) return res.status(400).json({ error: 'Valid email and 8+ char password required.' });
-  if (q.userByEmail.get(email.toLowerCase())) return res.status(409).json({ error: 'An account with that email already exists. Try logging in.' });
+  if (await q.userByEmail.get(email.toLowerCase())) return res.status(409).json({ error: 'An account with that email already exists. Try logging in.' });
   const hash = bcrypt.hashSync(password, 12);
   const prof = (application && application.profile) || {};
-  const info = q.createUser.run({ email: email.toLowerCase(), hash, first: prof.firstName || null, last: prof.lastName || null, phone: prof.phone || null });
+  const info = await q.createUser.run({ email: email.toLowerCase(), hash, first: prof.firstName || null, last: prof.lastName || null, phone: prof.phone || null });
   const userId = info.lastInsertRowid;
-  if (application) upsertApplication(userId, application);
+  if (application) await upsertApplication(userId, application);
   req.session.userId = userId;
   audit(userId, 'register+submit', req);
-  res.json({ ok: true, userId });
+  const u = await q.userById.get(userId);
+  // Commit the session before responding so the cookie is set reliably.
+  req.session.save(function () {
+    res.json({ ok: true, userId, token: makeToken(userId), user: u ? publicUser(u) : { id: userId, email: email.toLowerCase() } });
+  });
 }));
 
-app.post('/api/login', wrap((req, res) => {
+app.post('/api/login', wrap(async (req, res) => {
   const { email, password } = req.body || {};
-  const user = email ? q.userByEmail.get(String(email).toLowerCase()) : null;
+  const user = email ? await q.userByEmail.get(String(email).toLowerCase()) : null;
   const ok = user && bcrypt.compareSync(password || '', user.password_hash);
   if (!ok) { audit(user ? user.id : null, 'login-fail', req); return res.status(401).json({ error: 'Incorrect email or password.' }); }
   req.session.userId = user.id;
   audit(user.id, 'login', req);
-  res.json({ ok: true });
+  req.session.save(function () { res.json({ ok: true, token: makeToken(user.id), user: publicUser(user) }); });
 }));
 
 app.post('/api/logout', (req, res) => {
@@ -133,51 +178,51 @@ app.post('/api/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-app.get('/api/me', requireAuth, (req, res) => {
-  const u = q.userById.get(req.session.userId);
+app.get('/api/me', requireAuth, wrap(async (req, res) => {
+  const u = await q.userById.get(req.session.userId);
   if (!u) return res.status(401).json({ error: 'Session expired.' });
   res.json({ user: { id: u.id, email: u.email, firstName: u.first_name, lastName: u.last_name } });
-});
+}));
 
 /* ---- Applications (one per loan purpose) ---- */
 // List all of the user's applications (summaries).
-app.get('/api/applications', requireAuth, wrap((req, res) => {
-  const rows = q.listApplications.all(req.session.userId) || [];
+app.get('/api/applications', requireAuth, wrap(async (req, res) => {
+  const rows = (await q.listApplications.all(req.session.userId)) || [];
   res.json({ applications: rows.map(appSummary) });
 }));
 
 // Get one application. ?purpose=… returns that product; otherwise the most recent.
-app.get('/api/application', requireAuth, wrap((req, res) => {
+app.get('/api/application', requireAuth, wrap(async (req, res) => {
   const purpose = req.query.purpose;
   const row = (purpose && VALID_PURPOSES.indexOf(purpose) !== -1)
-    ? q.appByPurpose.get(req.session.userId, purpose)
-    : q.latestApplication.get(req.session.userId);
+    ? await q.appByPurpose.get(req.session.userId, purpose)
+    : await q.latestApplication.get(req.session.userId);
   if (!row) return res.json({ application: null });
   res.json({ application: JSON.parse(row.data_json), purpose: row.purpose || 'purchase', status: row.status, createdAt: row.created_at, updatedAt: row.updated_at });
 }));
 
 // Create OR update the application for its loan purpose (no duplicates).
-app.post('/api/application', requireAuth, wrap((req, res) => {
+app.post('/api/application', requireAuth, wrap(async (req, res) => {
   const { application } = req.body || {};
   if (!application || typeof application !== 'object') return res.status(400).json({ error: 'application required' });
-  const r = upsertApplication(req.session.userId, application);
+  const r = await upsertApplication(req.session.userId, application);
   audit(req.session.userId, 'application-save:' + r.purpose, req);
   res.json({ ok: true, purpose: r.purpose, updated: r.updated });
 }));
 
 // Delete the application for a given purpose (lets the user free up that slot).
-app.delete('/api/application', requireAuth, wrap((req, res) => {
+app.delete('/api/application', requireAuth, wrap(async (req, res) => {
   const purpose = req.query.purpose;
   if (!purpose || VALID_PURPOSES.indexOf(purpose) === -1) return res.status(400).json({ error: 'valid purpose required' });
-  const r = q.deleteByPurpose.run(req.session.userId, purpose);
+  const r = await q.deleteByPurpose.run(req.session.userId, purpose);
   audit(req.session.userId, 'application-delete:' + purpose, req);
   res.json({ ok: true, deleted: (r && r.changes) || 0 });
 }));
 
 // Personal info that can be reused across applications (NO SSN — never stored).
-app.get('/api/profile', requireAuth, wrap((req, res) => {
-  const row = q.latestApplication.get(req.session.userId);
-  const u = q.userById.get(req.session.userId);
+app.get('/api/profile', requireAuth, wrap(async (req, res) => {
+  const row = await q.latestApplication.get(req.session.userId);
+  const u = await q.userById.get(req.session.userId);
   let prof = {}, loan = {};
   if (row) { try { const a = JSON.parse(row.data_json); prof = a.profile || {}; loan = a.loan || {}; } catch (e) {} }
   res.json({ profile: {
@@ -193,11 +238,11 @@ app.get('/api/profile', requireAuth, wrap((req, res) => {
 }));
 
 /* Merge live shopping context into a specific application (by purpose, else latest). */
-app.patch('/api/application/context', requireAuth, wrap((req, res) => {
+app.patch('/api/application/context', requireAuth, wrap(async (req, res) => {
   const purpose = req.query.purpose;
   const row = (purpose && VALID_PURPOSES.indexOf(purpose) !== -1)
-    ? q.appByPurpose.get(req.session.userId, purpose)
-    : q.latestApplication.get(req.session.userId);
+    ? await q.appByPurpose.get(req.session.userId, purpose)
+    : await q.latestApplication.get(req.session.userId);
   if (!row) return res.status(404).json({ error: 'No application on file yet.' });
   let app;
   try { app = JSON.parse(row.data_json); } catch (e) { return res.status(500).json({ error: 'Stored application is unreadable.' }); }
@@ -208,7 +253,7 @@ app.patch('/api/application/context', requireAuth, wrap((req, res) => {
   if (c.lookingZip != null) app.profile.lookingZip = c.lookingZip;
   if (c.taxCounty != null) app.taxCounty = c.taxCounty;
   if (c.taxRatePct != null && app.loan) app.loan.taxRatePct = c.taxRatePct;
-  q.updateApplicationById.run(JSON.stringify(app), row.id);
+  await q.updateApplicationById.run(JSON.stringify(app), row.id);
   audit(req.session.userId, 'application-context', req);
   res.json({ ok: true });
 }));
@@ -244,17 +289,20 @@ function mapRentcastListing(x, zip) {
     daysOnMarket: x.daysOnMarket != null ? x.daysOnMarket : null,
   };
 }
-function readCache(key) {
+async function readCache(key) {
   try {
-    const row = q.getCache.get(key);
+    const row = await q.getCache.get(key);
     if (!row) return null;
-    const ageMs = Date.now() - new Date((row.fetched_at || '').replace(' ', 'T') + 'Z').getTime();
+    const fetchedMs = (row.fetched_at instanceof Date)
+      ? row.fetched_at.getTime()
+      : new Date(String(row.fetched_at).replace(' ', 'T') + 'Z').getTime();
+    const ageMs = Date.now() - fetchedMs;
     return { listings: JSON.parse(row.data_json), fresh: ageMs < LISTINGS_CACHE_TTL_MS };
   } catch (e) { return null; }
 }
 async function fetchRentcastByZip(zip) {
   const key = 'sale:' + zip;
-  const cached = readCache(key);
+  const cached = await readCache(key);
   if (cached && cached.fresh) return { listings: cached.listings, source: 'rentcast-cache' };
 
   const url = RENTCAST_BASE + '/listings/sale?zipCode=' + encodeURIComponent(zip) + '&status=Active&limit=50';
@@ -273,7 +321,7 @@ async function fetchRentcastByZip(zip) {
   const body = await resp.json();
   const rows = Array.isArray(body) ? body : (body.listings || body.data || []);
   const mapped = rows.map(function (x) { return mapRentcastListing(x, zip); });
-  try { q.setCache.run(key, JSON.stringify(mapped)); } catch (e) {}
+  try { await q.setCache.run(key, JSON.stringify(mapped)); } catch (e) {}
   return { listings: mapped, source: 'rentcast' };
 }
 function applyListingFilters(arr, f) {
@@ -323,21 +371,21 @@ app.get('/api/listings', async (req, res) => {
 });
 
 /* ---- Saved properties ---- */
-app.get('/api/saved', requireAuth, (req, res) => {
-  const rows = q.listSaved.all(req.session.userId);
+app.get('/api/saved', requireAuth, wrap(async (req, res) => {
+  const rows = (await q.listSaved.all(req.session.userId)) || [];
   res.json({ saved: rows.map(r => ({ listingId: r.listing_id, data: JSON.parse(r.data_json), savedAt: r.created_at })) });
-});
-app.post('/api/saved', requireAuth, (req, res) => {
+}));
+app.post('/api/saved', requireAuth, wrap(async (req, res) => {
   const { listing } = req.body || {};
   if (!listing || !listing.id) return res.status(400).json({ error: 'listing required' });
-  q.saveProperty.run(req.session.userId, String(listing.id), JSON.stringify(listing));
+  await q.saveProperty.run(req.session.userId, String(listing.id), JSON.stringify(listing));
   audit(req.session.userId, 'save-property:' + listing.id, req);
   res.json({ ok: true });
-});
-app.delete('/api/saved/:id', requireAuth, (req, res) => {
-  q.removeSaved.run(req.session.userId, String(req.params.id));
+}));
+app.delete('/api/saved/:id', requireAuth, wrap(async (req, res) => {
+  await q.removeSaved.run(req.session.userId, String(req.params.id));
   res.json({ ok: true });
-});
+}));
 
 /* ---- Client config (safe-to-expose, browser-side settings) ----
    The Google Maps JS API key is used in the browser by design; restrict it by
@@ -362,4 +410,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Server error — please try again.' });
 });
 
-app.listen(PORT, () => console.log(`Keystone running → http://localhost:${PORT}`));
+// Initialize the data store (creates Postgres tables when DATABASE_URL is set),
+// then start listening. If the DB can't initialize, fail loudly rather than
+// serving a broken app.
+initDb()
+  .then(() => app.listen(PORT, () => console.log(`Keystone running (${backend}) → http://localhost:${PORT}`)))
+  .catch((err) => { console.error('[db] init failed:', err); process.exit(1); });

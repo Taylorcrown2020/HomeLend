@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script src="/js/auth.js"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Client Portal — Keystone Home Lending</title>
@@ -167,7 +168,33 @@
     $('portalView').style.display = view === 'portal' ? 'block' : 'none';
   }
 
+  // Reusable robust POST: resolves {ok, status, data} and only rejects on a true
+  // network failure (server unreachable), which we report honestly.
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin', body: JSON.stringify(body || {})
+    }).then(function (res) {
+      return res.text().then(function (t) {
+        var data = {}; try { data = t ? JSON.parse(t) : {}; } catch (e) { data = {}; }
+        return { ok: res.ok, status: res.status, data: data };
+      });
+    });
+  }
+
   function boot() {
+    // If someone opened the file directly (file://), there is no server to talk
+    // to — explain that instead of letting every request fail as "network error".
+    if (location.protocol === 'file:') {
+      var lv = $('loginView');
+      if (lv) lv.innerHTML = '<div class="eyebrow" style="color:var(--green);font-weight:700;letter-spacing:.08em;text-transform:uppercase">Client Portal</div>' +
+        '<h1 style="margin:6px 0 10px">Start the server first</h1>' +
+        '<p class="psub">This page is open as a local file, so it can\'t reach the application server. ' +
+        'In a terminal, run <code>node server.js</code> from the project folder, then open ' +
+        '<b>http://localhost:3000</b> in your browser.</p>';
+      show('login');
+      return;
+    }
     $('loginBtn').addEventListener('click', doLogin);
     $('logoutBtn').addEventListener('click', doLogout);
     window.addEventListener('resize', function () { if (window.KSNumberBar) KSNumberBar.position($('ksNumberBar'), 'nav.nav'); });
@@ -183,13 +210,15 @@
   }
 
   function onAuthed(user) {
-    $('whoami').textContent = user.email;
-    $('logoutBtn').style.display = '';
-    $('greeting').textContent = user.firstName ? ('Welcome back, ' + user.firstName) : 'Your home dashboard';
+    user = user || {};
+    var who = $('whoami'); if (who) who.textContent = user.email || '';
+    var lo = $('logoutBtn'); if (lo) lo.style.display = '';
+    var g = $('greeting'); if (g) g.textContent = user.firstName ? ('Welcome back, ' + user.firstName) : 'Your home dashboard';
     show('portal');
-    loadApplications();
-    loadApplication();
-    loadSaved();
+    // These are independent; never let one failing throw out of onAuthed.
+    try { loadApplications(); } catch (e) {}
+    try { loadApplication(); } catch (e) {}
+    try { loadSaved(); } catch (e) {}
   }
 
   var PURPOSE_LABEL = { purchase: 'Purchase', refinance: 'Refinance', investment: 'Investment property', second_home: 'Second home' };
@@ -231,20 +260,39 @@
   }
 
   function doLogin() {
-    var email = $('loginEmail').value.trim(), pw = $('loginPassword').value;
+    var email = ($('loginEmail').value || '').trim(), pw = $('loginPassword').value || '';
     var msg = $('loginMsg');
     if (!email || !pw) { msg.style.color = 'var(--red)'; msg.textContent = 'Enter your email and password.'; return; }
     msg.style.color = 'var(--slate)'; msg.textContent = 'Signing in…';
-    fetch('/api/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin', body: JSON.stringify({ email: email, password: pw })
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    var btn = $('loginBtn'); if (btn) btn.disabled = true;
+
+    postJSON('/api/login', { email: email, password: pw })
       .then(function (o) {
-        if (!o.ok) { msg.style.color = 'var(--red)'; msg.textContent = o.j.error || 'Could not sign in.'; return; }
-        return fetch('/api/me', { credentials: 'same-origin' })
-          .then(function (r) { return r.json(); })
-          .then(function (me) { onAuthed(me.user); });
-      }).catch(function () { msg.style.color = 'var(--red)'; msg.textContent = 'Network error — please try again.'; });
+        if (btn) btn.disabled = false;
+        if (!o.ok) {
+          // Server responded — show the real reason (e.g., wrong password).
+          msg.style.color = 'var(--red)';
+          msg.textContent = (o.data && o.data.error) || ('Could not sign in (error ' + o.status + ').');
+          return;
+        }
+        // Login succeeded. Use the user the server returned; no fragile 2nd call.
+        msg.style.color = 'var(--green-700)'; msg.textContent = 'Signed in ✓';
+        if (o.data && o.data.user) {
+          try { onAuthed(o.data.user); } catch (e) { location.reload(); }
+        } else {
+          // Fallback: confirm session, then render.
+          fetch('/api/me', { credentials: 'same-origin' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) { if (j && j.user) onAuthed(j.user); else location.reload(); })
+            .catch(function () { location.reload(); });
+        }
+      })
+      .catch(function () {
+        // Only a true network failure (server unreachable) lands here.
+        if (btn) btn.disabled = false;
+        msg.style.color = 'var(--red)';
+        msg.textContent = 'Can\'t reach the server. Make sure it\'s running and that you opened this site at its http://… address (not the file).';
+      });
   }
 
   function doLogout() {

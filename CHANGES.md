@@ -234,3 +234,82 @@ never drift apart. Verified: occupancy-aware min down (conv 5% primary / 15%
 investment), FHA low-credit 10% down, VA fee 1.5%/0.5%/2.15% for purchase/IRRRL/
 cash-out, refi caps pulled from the table, and a configure() override visibly
 changing the cap and DTI. All 21 calc tests still pass.
+
+---
+
+# Round 7 — login fixed for real (cookie + honest errors)
+
+ROOT CAUSE of "Network error / it doesn't save my login": the session cookie was
+marked Secure whenever NODE_ENV=production. Over plain http that makes the browser
+silently discard the cookie, so login returned 200 but the next request was
+logged out — and the portal then read an undefined user and threw, which the old
+code mislabeled as "Network error."
+
+Fixes:
+- Cookie is Secure ONLY when you opt in with COOKIE_SECURE=1 (for real HTTPS).
+  Default is http-friendly, so the session persists. Verified login persists even
+  with NODE_ENV=production now.
+- /api/login and /api/register-and-submit save the session explicitly and return
+  the user, so the client doesn't depend on a fragile second request.
+- Recreated the portal login: true network failures say "can't reach the server,"
+  wrong passwords show the real reason, and a rendering error can never masquerade
+  as a network error. Opening the page as a file:// now shows clear instructions
+  to start the server instead of failing silently.
+
+---
+
+# Round 8 — works on Render/HTTPS, cookie-proof login
+
+Deploying behind a proxy (Render) exposed the last cookie pitfall. Fixed two ways
+so login works no matter the environment:
+
+1. Proxy-aware cookies: `app.set('trust proxy', 1)` + `cookie.secure:'auto'`, so the
+   cookie is correctly marked Secure over HTTPS (Render) and plain over local http
+   — the same build works in both places, no env tweaking.
+2. Token fallback (belt-and-suspenders): /api/login and /api/register-and-submit
+   return a signed HMAC token. A new /js/auth.js (loaded first on every page)
+   stores it and sends it as `Authorization: Bearer …` on every API call, and
+   requireAuth accepts it. So even if the browser/host drops cookies entirely,
+   auth still works. The token is verified by HMAC(SESSION_SECRET); forged tokens
+   are rejected.
+
+Note on Render: the free tier's filesystem is ephemeral, so the bundled SQLite/
+JSON store resets when the service restarts or redeploys (accounts created before
+a restart won't be there after). For durable accounts, attach a Render Disk or use
+a managed Postgres and point the data store at it. Also set SESSION_SECRET in the
+Render dashboard so tokens/sessions survive restarts.
+
+Verified: token-only auth (no cookies) — register/login return a token, /api/me &
+protected routes accept it (200), missing/forged tokens rejected (401); cookie
+auth still 200; client auth.js captures/attaches/clears the token. 21 calc tests
+pass.
+
+---
+
+# Round 9 — Postgres for durable accounts on Render
+
+The data layer now supports Postgres so accounts/applications survive restarts and
+redeploys on Render (the free tier's local disk is wiped on restart, which is why
+file-based storage "forgot" accounts).
+
+How it works:
+- Set DATABASE_URL → the app uses Postgres (node-postgres). No DATABASE_URL → it
+  falls back to better-sqlite3, or a pure-JS file store, for local dev. Same code.
+- The entire query layer (`q`) is now async; every route awaits it. initDb()
+  creates the Postgres tables on boot, then the server starts listening.
+- SSL is enabled automatically for non-local Postgres (Render requires it).
+
+Verified: 14 Postgres SQL checks via an in-memory Postgres engine (SERIAL +
+RETURNING, UNIQUE(user_id,purpose) enforcement, ON CONFLICT upserts for saved
+properties and the listings cache, rowCount→changes, now()); a full end-to-end
+server run on Postgres (register → token auth → second product → returning login →
+data still present); and the local JSON path still passes the whole flow. 21 calc
+tests pass.
+
+## Render setup (one time)
+1. Render dashboard → New → PostgreSQL. Create it (free tier is fine).
+2. Open the new database → copy the "Internal Database URL".
+3. Your web service → Environment → add:
+     DATABASE_URL = <the Internal Database URL>
+     SESSION_SECRET = <any long random string>
+4. Deploy. On boot you'll see "Keystone running (postgres)" and accounts persist.

@@ -877,6 +877,11 @@
 
   function submit() {
     var msg = $('submitMsg');
+    if (location.protocol === 'file:') {
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'This page is open as a local file, so it can\'t save to the server. Run "node server.js" and open http://localhost:3000, then submit.';
+      return;
+    }
     if (!$('consent').checked) { msg.style.color = 'var(--red)'; msg.textContent = 'Please acknowledge the estimate disclaimer to continue.'; return; }
 
     var app = snapshot();
