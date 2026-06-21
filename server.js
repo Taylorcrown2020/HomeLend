@@ -237,6 +237,31 @@ app.get('/api/profile', requireAuth, wrap(async (req, res) => {
   } });
 }));
 
+/* Previous co-borrowers the user has applied with (forward reuse). NO SSN. */
+app.get('/api/coborrowers', requireAuth, wrap(async (req, res) => {
+  const rows = (await q.listApplications.all(req.session.userId)) || [];
+  const seen = {}, out = [];
+  rows.forEach(function (row) {
+    let a = {}; try { a = JSON.parse(row.data_json); } catch (e) {}
+    const c = a.coBorrower;
+    if (!c || (!c.email && !c.firstName)) return;
+    const key = (c.email || (c.firstName + c.lastName) || '').toLowerCase();
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    out.push({ firstName: c.firstName || '', lastName: c.lastName || '', email: c.email || '',
+               phone: c.phone || '', address: c.address || '', relationship: c.relationship || '', income: c.income || '' });
+  });
+  res.json({ coBorrowers: out });
+}));
+
+/* Whether an email already has an account (to link a co-borrower). Auth-gated. */
+app.get('/api/account-exists', requireAuth, wrap(async (req, res) => {
+  const email = String(req.query.email || '').toLowerCase().trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.json({ exists: false });
+  const u = await q.userByEmail.get(email);
+  res.json({ exists: !!u });
+}));
+
 /* Merge live shopping context into a specific application (by purpose, else latest). */
 app.patch('/api/application/context', requireAuth, wrap(async (req, res) => {
   const purpose = req.query.purpose;

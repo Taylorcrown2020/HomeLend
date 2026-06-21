@@ -313,3 +313,44 @@ tests pass.
      DATABASE_URL = <the Internal Database URL>
      SESSION_SECRET = <any long random string>
 4. Deploy. On boot you'll see "Keystone running (postgres)" and accounts persist.
+
+---
+
+# Round 10 — separate applications, more loan programs, co-borrower details
+
+## Applications no longer bleed together
+Each application already stored its own debts/income/REO, but the dashboard and
+portal acted on "the latest application" and wrote your shopping context to
+whichever was newest — so two applications appeared to merge. Fixed:
+- The dashboard now has an application picker (shown when you have more than one)
+  and drives all numbers from the one you choose.
+- Shopping context (where you're looking, the home you selected, its numbers) is
+  now saved to that specific application (?purpose=…), never a shared "latest".
+- Verified: a purchase app and an investment app keep their own ZIP and their own
+  DTI (34% vs 48%) — changing one does not touch the other.
+
+## More loan programs
+Added Adjustable-Rate (ARM 5/7/10), Interest-Only, Bridge, Balloon, DSCR
+(investor), and Bank-Statement / Non-QM — in the rule table, the engine, the
+program grid, eligibility, a per-program options panel, and the review:
+- Interest-only and bridge compute an interest-only payment.
+- Balloon shows the remaining balance due at the balloon date (5/7/10 yr).
+- ARM uses the intro fixed rate and labels the intro period.
+- DSCR (investment only) qualifies on rent ÷ payment (≥ 1.0) instead of personal
+  DTI; bridge qualifies on equity/exit, so neither is gated on your DTI.
+
+## Co-borrower details + reuse
+The co-borrower section now collects name, email, phone, and address (plus the
+existing income/relationship/DOB; SSN is entered but never stored). New:
+- "Reuse a previous co-borrower" picker fills in someone you've applied with
+  before (/api/coborrowers).
+- If the co-borrower's email already has a Keystone account, the form detects it
+  and notes they'll be linked; otherwise it offers to invite them to make a login.
+
+Still to come (the larger auth piece): a co-borrower actually creating their own
+linked login from an invite, and the reverse-direction prompt ("someone listed
+you as their co-borrower — add them?") across two separate accounts.
+
+Verified end-to-end on both the local store and Postgres: joint application with a
+co-borrower (no SSN stored), /api/coborrowers reuse, account-exists detection,
+application independence, and the full login flow. 21 calc tests pass.

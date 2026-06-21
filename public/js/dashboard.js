@@ -69,11 +69,47 @@
   }
 
   function loadApplication() {
-    // Server is the only source of truth — no client-side fallback.
-    return fetch('/api/application', { credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.json() : { application: null }; })
-      .then(function (j) { if (j && j.application) state.app = j.application; })
+    // Load ALL the user's applications, then drive the dashboard from ONE of them
+    // (the active application) — so separate applications never blur together.
+    return fetch('/api/applications', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { applications: [] }; })
+      .then(function (j) {
+        state.apps = (j && j.applications) || [];
+        var stored = null; try { stored = localStorage.getItem('ks_active_app'); } catch (e) {}
+        var purposes = state.apps.map(function (a) { return a.purpose; });
+        state.activePurpose = (stored && purposes.indexOf(stored) !== -1) ? stored
+          : (state.apps[0] ? state.apps[0].purpose : null);
+        renderAppSelector();
+        var url = state.activePurpose ? ('/api/application?purpose=' + encodeURIComponent(state.activePurpose)) : '/api/application';
+        return fetch(url, { credentials: 'same-origin' })
+          .then(function (r) { return r.ok ? r.json() : { application: null }; })
+          .then(function (jj) { state.app = (jj && jj.application) || null; });
+      })
       .catch(function () {});
+  }
+
+  // A small selector to switch which application drives the numbers (only shown
+  // when there is more than one).
+  var PURPOSE_LABEL = { purchase: 'Purchase', refinance: 'Refinance', investment: 'Investment', second_home: 'Second home' };
+  function renderAppSelector() {
+    var host = $('appSelector'); if (!host) return;
+    if (!state.apps || state.apps.length < 2) { host.style.display = 'none'; return; }
+    host.style.display = '';
+    host.innerHTML = '<label style="font-size:13px;color:var(--slate);margin-right:8px">Application:</label>' +
+      '<select id="appSelectorSel" style="padding:6px 10px;border:1px solid var(--line);border-radius:8px;font:inherit">' +
+      state.apps.map(function (a) {
+        var lbl = (PURPOSE_LABEL[a.purpose] || a.purpose) + (a.program ? ' · ' + String(a.program).replace(/_/g, ' ') : '');
+        return '<option value="' + a.purpose + '"' + (a.purpose === state.activePurpose ? ' selected' : '') + '>' + lbl + '</option>';
+      }).join('') + '</select>';
+    var sel = $('appSelectorSel');
+    if (sel) sel.addEventListener('change', function () {
+      state.activePurpose = sel.value;
+      try { localStorage.setItem('ks_active_app', sel.value); } catch (e) {}
+      // Reload that application and recompute everything against it.
+      var url = '/api/application?purpose=' + encodeURIComponent(state.activePurpose);
+      fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : { application: null }; })
+        .then(function (jj) { state.app = (jj && jj.application) || null; hydrateFromApp(); applyQualifiedRange(); refresh(); });
+    });
   }
 
   function loadSaved() {
@@ -438,7 +474,8 @@
     if (!state.authed) return; // nothing to write server-side
     clearTimeout(persistTimer);
     persistTimer = setTimeout(function () {
-      fetch('/api/application/context', {
+      var url = state.activePurpose ? ('/api/application/context?purpose=' + encodeURIComponent(state.activePurpose)) : '/api/application/context';
+      fetch(url, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin', body: JSON.stringify({ context: context })
       }).catch(function () {});

@@ -129,6 +129,13 @@
       eligible.usda = { ok: false, reason: 'Not offered for refinances here.' };
       eligible.jumbo = { ok: isJumbo || loanAmt === 0, reason: (!isJumbo && loanAmt > 0) ? 'Below the conforming limit — Jumbo not needed.' : null };
       eligible.land = { ok: false, reason: 'Not applicable to a refinance.' };
+      // Refinance also supports ARM, interest-only, and balloon; DSCR for rentals.
+      eligible.arm = { ok: true };
+      eligible.interest_only = { ok: true };
+      eligible.balloon = { ok: true };
+      eligible.bridge = { ok: false, reason: 'Bridge loans are for purchases (buy before you sell).' };
+      eligible.dscr = { ok: occ === 'investment', reason: occ === 'investment' ? null : 'DSCR is for investment/rental properties.' };
+      eligible.non_qm = { ok: true };
       return eligible;
     }
 
@@ -151,6 +158,13 @@
       reason: (!isJumbo && loanAmt > 0) ? 'Your loan is below the $' + CONFORMING_LIMIT.toLocaleString() + ' conforming limit — Jumbo not needed.' : null
     };
     eligible.land = { ok: true };
+    // Additional programs
+    eligible.arm = { ok: true };                                   // adjustable-rate, any occupancy
+    eligible.interest_only = { ok: true };
+    eligible.balloon = { ok: true };
+    eligible.non_qm = { ok: true };                                // self-employed / bank-statement
+    eligible.bridge = { ok: true };                                // short-term, buy-before-sell
+    eligible.dscr = { ok: occ === 'investment', reason: occ === 'investment' ? null : 'DSCR qualifies on rental income — choose an investment property.' };
     return eligible;
   }
   // Minimum down payment (%) for program + occupancy, from the shared rule table.
@@ -400,6 +414,9 @@
       discountPoints: state.selectedRate ? (+state.selectedRate.points || 0) : 0,
       occupancy: state.occupancy,
       loanPurpose: state.loanPurpose,
+      armInitialYears: $('armInitialYears') ? +$('armInitialYears').value : null,
+      balloonYears: $('balloonYears') ? +$('balloonYears').value : null,
+      expectedRent: num($('expectedRent') ? $('expectedRent').value : 0),
     };
     if (state.loanPurpose === 'refinance') {
       readRefiInputs();
@@ -539,6 +556,7 @@
       var c = $('cond-' + k);
       if (c) c.classList.toggle('show', prog === k);
     });
+    updateProgramOptions(prog);
     // Update DPA note
     var dpaNote = $('dpaFeeNote');
     if (dpaNote && state.dpa) {
@@ -550,10 +568,33 @@
     updateDownPayHint();
   }
 
+  // Show the right program-specific options (ARM intro period, balloon term,
+  // DSCR expected rent) and an explainer for the selected program.
+  function updateProgramOptions(prog) {
+    var box = $('cond-progopts'); if (!box) return;
+    var showArm = prog === 'arm', showBalloon = prog === 'balloon', showDscr = prog === 'dscr';
+    var io = prog === 'interest_only' || prog === 'bridge';
+    if ($('opt-arm')) $('opt-arm').style.display = showArm ? '' : 'none';
+    if ($('opt-balloon')) $('opt-balloon').style.display = showBalloon ? '' : 'none';
+    if ($('opt-dscr')) $('opt-dscr').style.display = showDscr ? '' : 'none';
+    var notes = {
+      arm: 'Your rate is fixed for the intro period, then adjusts periodically. Estimates use the intro rate; your payment can change after that.',
+      interest_only: 'You pay only interest during the intro period, so the payment is lower but the balance does not go down. It rises when principal kicks in.',
+      bridge: 'Short-term, interest-only financing to buy before you sell. Qualifies mainly on your equity and exit plan rather than DTI.',
+      balloon: 'Lower payment now, but the remaining balance is due in full on the balloon date — you refinance or sell before then.',
+      dscr: 'No personal income used: the loan qualifies if the rent covers the payment (DSCR ≥ 1.0). Enter the expected monthly rent.',
+      non_qm: 'For self-employed borrowers — income is documented with bank statements instead of tax returns. Expect a higher rate and down payment.',
+    };
+    var hasOpts = showArm || showBalloon || showDscr || io || prog === 'non_qm';
+    box.style.display = hasOpts ? '' : 'none';
+    box.classList.toggle('show', hasOpts);
+    var note = $('progOptsNote');
+    if (note) { note.innerHTML = notes[prog] ? ('ℹ️ ' + notes[prog]) : ''; note.style.display = notes[prog] ? 'block' : 'none'; }
+  }
+
   /* ====== DPA toggle ====== */
   function updateDPA() {
     state.dpa = $('dpaToggle').checked;
-    $('cond-dpa').classList.toggle('show', state.dpa);
     $('dpaToggleWrap').classList.toggle('sel', state.dpa);
     var dpaNote = $('dpaFeeNote');
     if (dpaNote) dpaNote.innerHTML = state.dpa ?
@@ -755,17 +796,20 @@
       ['Base loan amount', fmt(r.baseLoan)],
       ['Financed fee (UFMIP/VA/USDA)', r.financedFee ? fmt(r.financedFee) : '—'],
       rateRow,
-      ['Principal & interest', fmt(r.pi) + '/mo'],
+      (r.armInitialYears ? ['ARM intro period', r.armInitialYears + ' years fixed, then adjusts'] : null),
+      [r.paymentType === 'interest_only' ? 'Interest-only payment' : 'Principal & interest', fmt(r.pi) + '/mo'],
+      (r.balloonYears ? ['Balloon balance due (yr ' + r.balloonYears + ')', fmt(r.balloonBalance)] : null),
+      (r.dscr != null ? ['DSCR (rent ÷ payment)', r.dscr + ' (min ' + r.dscrMin + ')'] : null),
       ['Property tax', fmt(r.monthlyTax) + '/mo (' + (state.taxCounty || 'TX') + ')'],
       ['Homeowners insurance', fmt(r.monthlyInsurance) + '/mo'],
       ['Mortgage insurance / MI', r.monthlyMI ? fmt(r.monthlyMI) + '/mo' : 'none'],
       ['HOA', r.hoaMonthly ? fmt(r.hoaMonthly) + '/mo' : '—'],
       ['DPA assistance applied', state.dpa && r.dpaAmount ? fmt(r.dpaAmount) : '—'],
       ['Total monthly payment', fmt(r.totalMonthly) + '/mo'],
-      ['Front / back DTI', r.frontDTI + '% / ' + r.backDTI + '%'],
+      (r.dscr != null ? null : ['Front / back DTI', r.frontDTI + '% / ' + r.backDTI + '%']),
       ['LTV', r.ltv + '%'],
       ['Estimated cash to close (incl. closing costs)', fmt(r.cashToClose)],
-      ];
+      ].filter(Boolean);
     }
     $('reviewLines').innerHTML = rows.map(function (x) {
       return '<div class="summary-line"><span>' + x[0] + '</span><b>' + x[1] + '</b></div>';
@@ -839,6 +883,19 @@
       program: state.program, termYears: state.termYears, dpa: state.dpa,
       loanPurpose: state.loanPurpose, occupancy: state.occupancy, ownedRecently: state.ownedRecently,
       refi: state.refi,
+      appType: state.appType,
+      coBorrower: state.appType === 'joint' ? {
+        firstName: $('coFirst') ? $('coFirst').value : '',
+        lastName: $('coLast') ? $('coLast').value : '',
+        email: $('coEmail') ? $('coEmail').value.trim() : '',
+        phone: $('coPhone') ? $('coPhone').value : '',
+        address: $('coAddress') ? $('coAddress').value : '',
+        relationship: $('coRelationship') ? $('coRelationship').value : '',
+        income: num($('coIncome') ? $('coIncome').value : 0),
+        dob: $('coDob') ? $('coDob').value : '',
+        invite: $('coInvite') ? $('coInvite').checked : false,
+        // SSN is intentionally NEVER stored.
+      } : null,
       debts: state.debts, assets: state.assets, reos: state.reos,
       reoSummary: gatherREO(),
       selectedRate: state.selectedRate, taxCounty: state.taxCounty,
@@ -1013,6 +1070,53 @@
     $('autofillSkip').onclick = function () { b.style.display = 'none'; };
   }
 
+  // When adding a co-borrower, offer to reuse someone the user has applied with
+  // before (forward direction of "add my previous co-borrower").
+  var coBorrowerCache = [];
+  function loadPreviousCoBorrowers() {
+    if (!isAuthed) return;
+    var wrap = $('coReuseWrap'), sel = $('coReuse');
+    if (!wrap || !sel) return;
+    fetch('/api/coborrowers', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : { coBorrowers: [] }; })
+      .then(function (j) {
+        coBorrowerCache = (j && j.coBorrowers) || [];
+        if (!coBorrowerCache.length) { wrap.style.display = 'none'; return; }
+        wrap.style.display = '';
+        sel.innerHTML = '<option value="">— Start fresh —</option>' + coBorrowerCache.map(function (c, i) {
+          var nm = ((c.firstName || '') + ' ' + (c.lastName || '')).trim() || c.email || ('Co-borrower ' + (i + 1));
+          return '<option value="' + i + '">' + nm + (c.email ? ' (' + c.email + ')' : '') + '</option>';
+        }).join('');
+        sel.onchange = function () {
+          var c = coBorrowerCache[+sel.value];
+          if (!c) return;
+          setVal('coFirst', c.firstName); setVal('coLast', c.lastName); setVal('coEmail', c.email);
+          setVal('coPhone', c.phone); setVal('coAddress', c.address); setVal('coIncome', c.income);
+          if (c.relationship && $('coRelationship')) $('coRelationship').value = c.relationship;
+          checkCoBorrowerAccount();
+          recompute();
+        };
+      }).catch(function () {});
+  }
+  // If the co-borrower's email already has a Keystone account, note that they'll be linked.
+  function checkCoBorrowerAccount() {
+    var email = $('coEmail') ? $('coEmail').value.trim() : '';
+    var note = $('coInviteNote'); if (!note) return;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+    fetch('/api/account-exists?email=' + encodeURIComponent(email), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (j && j.exists) {
+          note.innerHTML = '✓ This person already has a Keystone account — they\'ll be linked to this application and can add you as their co-borrower too.';
+          if ($('coInvite')) { $('coInvite').checked = false; }
+          if ($('coInviteWrap')) $('coInviteWrap').style.display = 'none';
+        } else {
+          if ($('coInviteWrap')) $('coInviteWrap').style.display = 'inline-flex';
+          note.innerHTML = 'If they accept, they can sign in, see this application, and add you as their co-borrower on their own applications. Their SSN is never stored.';
+        }
+      }).catch(function () {});
+  }
+
   function prefillFromApplication(app) {
     editingExisting = true;
     var loan = app.loan || {}, prof = app.profile || {}, ctx = app.context || {};
@@ -1037,10 +1141,27 @@
       if (rzip && $('refiZip')) $('refiZip').value = rzip;
     }
 
+    // Co-borrower
+    if (app.appType === 'joint' || app.coBorrower) {
+      state.appType = 'joint';
+      setRadio('appType', 'joint');
+      if ($('cond-co')) $('cond-co').classList.add('show');
+      var cb = app.coBorrower || {};
+      setVal('coFirst', cb.firstName); setVal('coLast', cb.lastName); setVal('coEmail', cb.email);
+      setVal('coPhone', cb.phone); setVal('coAddress', cb.address); setVal('coIncome', cb.income); setVal('coDob', cb.dob);
+      if (cb.relationship && $('coRelationship')) $('coRelationship').value = cb.relationship;
+      if ($('coInvite')) $('coInvite').checked = cb.invite !== false;
+    }
+
     // Program + term + DPA
     state.termYears = loan.termYears || app.termYears || 30;
     setRadio('termChoice', String(state.termYears));
     if (app.program) selectProgram(app.program);
+    // Restore program-specific options (ARM period, balloon term, DSCR rent)
+    if (loan.armInitialYears && $('armInitialYears')) $('armInitialYears').value = loan.armInitialYears;
+    if (loan.balloonYears && $('balloonYears')) $('balloonYears').value = loan.balloonYears;
+    if (loan.expectedRent && $('expectedRent')) $('expectedRent').value = loan.expectedRent;
+    updateProgramOptions(state.program);
     if (app.dpa && $('dpaToggle')) { $('dpaToggle').checked = true; updateDPA(); }
 
     // Property + down payment
@@ -1095,6 +1216,7 @@
         if (name === 'appType') {
           state.appType = (document.querySelector('input[name=appType]:checked') || {}).value || 'solo';
           $('cond-co').classList.toggle('show', state.appType === 'joint');
+          if (state.appType === 'joint') loadPreviousCoBorrowers();
         }
         if (name === 'usdaArea') {
           var ua = document.querySelector('input[name=usdaArea]:checked');
@@ -1252,7 +1374,7 @@
     document.querySelectorAll('[data-back]').forEach(function (b) { b.addEventListener('click', function () { showStep(step - 1); }); });
 
     // Input listeners
-    ['purchasePrice', 'hoaMonthly', 'income', 'coIncome', 'creditScore', 'dpaAmount'].forEach(function (id) {
+    ['purchasePrice', 'hoaMonthly', 'income', 'coIncome', 'creditScore', 'dpaAmount', 'expectedRent'].forEach(function (id) {
       var e = $(id); if (e) e.addEventListener('input', recompute);
     });
     var dpEl = $('downPct');
@@ -1271,6 +1393,10 @@
       var e = $(id); if (e) e.addEventListener('input', recompute);
     });
     var rfc = $('refiFinanceCosts'); if (rfc) rfc.addEventListener('change', recompute);
+    var coe = $('coEmail'); if (coe) coe.addEventListener('blur', checkCoBorrowerAccount);
+    ['armInitialYears', 'balloonYears'].forEach(function (id) {
+      var e = $(id); if (e) e.addEventListener('change', recompute);
+    });
 
     // Program tiles
     document.querySelectorAll('#progGrid .prog').forEach(function (el) {

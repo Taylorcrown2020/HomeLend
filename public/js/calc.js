@@ -32,6 +32,8 @@
     programLabel: {
       conventional: 'Conventional', conventional_fthb: 'Conventional (First-Time Buyer 97%)',
       fha: 'FHA', va: 'VA', usda: 'USDA Rural', jumbo: 'Jumbo', land: 'Land / Lot',
+      arm: 'Adjustable-Rate (ARM)', bridge: 'Bridge Loan', interest_only: 'Interest-Only',
+      dscr: 'DSCR (Investor)', non_qm: 'Bank-Statement / Non-QM', balloon: 'Balloon',
     },
 
     // Minimum down payment (fraction) by program × occupancy (purchase).
@@ -43,14 +45,30 @@
       usda:              { primary: 0.00, second: 0.00, investment: 0.00 },
       jumbo:             { primary: 0.10, second: 0.20, investment: 0.25 },
       land:              { primary: 0.20, second: 0.20, investment: 0.20 },
+      arm:               { primary: 0.05, second: 0.10, investment: 0.15 },
+      bridge:            { primary: 0.20, second: 0.20, investment: 0.20 },
+      interest_only:     { primary: 0.10, second: 0.15, investment: 0.20 },
+      dscr:              { primary: 0.20, second: 0.20, investment: 0.20 },
+      non_qm:            { primary: 0.10, second: 0.15, investment: 0.20 },
+      balloon:           { primary: 0.10, second: 0.15, investment: 0.20 },
     },
     fhaLowCreditThreshold: 580,     // < this → 10% down for FHA
     fhaLowCreditDown: 0.10,
 
-    minCredit: { conventional: 620, conventional_fthb: 620, fha: 500, va: 580, usda: 600, jumbo: 700, land: 640 },
+    minCredit: { conventional: 620, conventional_fthb: 620, fha: 500, va: 580, usda: 600, jumbo: 700, land: 640,
+                 arm: 620, bridge: 680, interest_only: 700, dscr: 660, non_qm: 660, balloon: 640 },
 
-    // Max back-end DTI (fraction) by program.
-    maxBackDTI: { conventional: 0.50, conventional_fthb: 0.50, fha: 0.569, va: 0.60, usda: 0.43, jumbo: 0.43, land: 0.43 },
+    // Max back-end DTI (fraction) by program. Bridge & DSCR don't use personal DTI
+    // (bridge qualifies on equity/exit; DSCR on property cash flow) — null = N/A.
+    maxBackDTI: { conventional: 0.50, conventional_fthb: 0.50, fha: 0.569, va: 0.60, usda: 0.43, jumbo: 0.43, land: 0.43,
+                  arm: 0.50, bridge: null, interest_only: 0.43, dscr: null, non_qm: 0.50, balloon: 0.43 },
+
+    // DSCR (investor) minimum debt-service-coverage ratio: monthly rent ÷ PITI.
+    dscrMin: 1.0,
+    // Interest-only programs pay interest only during an initial period.
+    interestOnly: ['interest_only', 'bridge'],
+    // ARM initial fixed periods offered (years).
+    armPeriods: [5, 7, 10],
 
     // Refinance max LTV (fraction) by program × type × occupancy.
     refiMaxLtv: {
@@ -109,6 +127,15 @@
     if (loanAmount <= 0) return 0;
     if (r === 0) return loanAmount / n;
     return loanAmount * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  }
+
+  /** Remaining balance after `afterYears` of payments (for balloon loans). */
+  function remainingBalance(loanAmount, annualRatePct, termYears, afterYears) {
+    const r = (annualRatePct / 100) / 12, n = termYears * 12, p = Math.min(afterYears * 12, n);
+    if (loanAmount <= 0) return 0;
+    if (r === 0) return Math.max(0, loanAmount * (1 - p / n));
+    const pay = principalAndInterest(loanAmount, annualRatePct, termYears);
+    return Math.max(0, loanAmount * Math.pow(1 + r, p) - pay * ((Math.pow(1 + r, p) - 1) / r));
   }
 
   /** Conventional monthly PMI (0 if LTV<=80%). */
@@ -196,9 +223,22 @@
       : round(price * RULES.insRate, 2);
     const monthlyInsurance = round(annualInsurance / 12, 2);
 
-    const pi = round(principalAndInterest(totalLoan, ratePct, termYears), 2);
+    // Payment type: interest-only programs (bridge, interest-only) pay interest
+    // only; everything else amortizes. Balloon amortizes on the full term but the
+    // remaining balance comes due at the balloon date.
+    const interestOnly = RULES.interestOnly.indexOf(program) !== -1 || !!i.interestOnly;
+    const pi = interestOnly
+      ? round(totalLoan * ((ratePct / 100) / 12), 2)
+      : round(principalAndInterest(totalLoan, ratePct, termYears), 2);
+    const armInitialYears = program === 'arm' ? (+i.armInitialYears || 5) : null;
+    const balloonYears = program === 'balloon' ? (+i.balloonYears || 7) : null;
+    const balloonBalance = balloonYears ? round(remainingBalance(totalLoan, ratePct, termYears, balloonYears), 2) : null;
     const piti = round(pi + monthlyTax + monthlyInsurance, 2);
     const totalMonthly = round(piti + monthlyMI + hoaMonthly, 2);
+
+    // DSCR (investor): qualifies on property cash flow, not personal DTI.
+    const grossRent = +i.expectedRent || +i.grossMonthlyRent || 0;
+    const dscr = program === 'dscr' ? (totalMonthly > 0 ? round(grossRent / totalMonthly, 2) : 0) : null;
 
     // DTI
     const frontDTI = grossMonthly > 0 ? round((totalMonthly / grossMonthly) * 100, 1) : 0;
@@ -230,6 +270,9 @@
       annualTax, annualInsurance,
       closingCosts, prepaids, dpaAmount, sellerCredits, lenderCredits,
       discountPoints, pointsCost,
+      paymentType: interestOnly ? 'interest_only' : 'amortizing',
+      interestOnly, armInitialYears, balloonYears, balloonBalance,
+      dscr, dscrMin: RULES.dscrMin, grossRent,
       cashToClose: Math.max(0, cashToClose),
     };
   }
@@ -372,7 +415,15 @@
     if ((c.creditScore || 0) < rule.minCredit) {
       reasons.push(`Credit score ${c.creditScore || 'n/a'} is below ${rule.minCredit} typical for ${rule.label}.`);
     }
-    if (result.backDTI > maxBackDTI) {
+    // DSCR (investor) qualifies on property cash flow, not personal DTI.
+    if (result.program === 'dscr') {
+      const min = result.dscrMin || RULES.dscrMin;
+      if (!result.dscr || result.dscr < min) {
+        reasons.push(`DSCR ${result.dscr || 0} is below the ${min} minimum (monthly rent must cover the payment). Enter expected rent.`);
+      }
+    } else if (RULES.maxBackDTI[result.program] === null) {
+      // Bridge: qualifies on equity/exit strategy — no personal DTI gate here.
+    } else if (result.backDTI > maxBackDTI) {
       reasons.push(`Back-end DTI ${result.backDTI}% exceeds ~${maxBackDTI}% guideline.`);
     }
     if ((result.program === 'conventional' || result.program === 'conventional_fthb' || result.program === 'jumbo')

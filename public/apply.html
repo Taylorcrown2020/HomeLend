@@ -343,6 +343,24 @@
         <div class="prog" data-prog="usda"><div class="pn">USDA Rural</div><div class="pd">0% down · eligible areas + income limits</div></div>
         <div class="prog" data-prog="jumbo"><div class="pn">Jumbo</div><div class="pd">Above conforming limit · 10%+ down, 700+</div></div>
         <div class="prog" data-prog="land"><div class="pn">Land / Lot</div><div class="pd">20% min down · shorter terms</div></div>
+        <div class="prog" data-prog="arm"><div class="pn">Adjustable-Rate (ARM)</div><div class="pd">Lower fixed intro rate (5/7/10 yr), then adjusts</div></div>
+        <div class="prog" data-prog="interest_only"><div class="pn">Interest-Only</div><div class="pd">Pay interest only for an intro period · lower payment</div></div>
+        <div class="prog" data-prog="bridge"><div class="pn">Bridge Loan</div><div class="pd">Short-term, interest-only · buy before you sell</div></div>
+        <div class="prog" data-prog="balloon"><div class="pn">Balloon</div><div class="pd">Low payment now · full balance due at the balloon date</div></div>
+        <div class="prog" data-prog="dscr"><div class="pn">DSCR (Investor)</div><div class="pd">Qualifies on the property's rent, not your income</div></div>
+        <div class="prog" data-prog="non_qm"><div class="pn">Bank-Statement / Non-QM</div><div class="pd">For self-employed · income via bank statements</div></div>
+      </div>
+
+      <div class="cond" id="cond-progopts" style="display:none">
+        <h3 style="font-size:15px;margin:6px 0" id="progOptsTitle">Program options</h3>
+        <div class="grid-2">
+          <label class="field" id="opt-arm" style="display:none"><span>ARM intro fixed period</span>
+            <select id="armInitialYears"><option value="5">5/6 ARM — 5 yrs fixed</option><option value="7">7/6 ARM — 7 yrs fixed</option><option value="10">10/6 ARM — 10 yrs fixed</option></select></label>
+          <label class="field" id="opt-balloon" style="display:none"><span>Balloon due in</span>
+            <select id="balloonYears"><option value="5">5 years</option><option value="7" selected>7 years</option><option value="10">10 years</option></select></label>
+          <label class="field inline-prefix" id="opt-dscr" style="display:none"><span>Expected monthly rent</span><span class="adorn">$</span><input id="expectedRent" inputmode="numeric" placeholder="2,500"></label>
+        </div>
+        <div class="exclude-note" id="progOptsNote" style="display:none"></div>
       </div>
 
       <div class="cond" id="cond-va">
@@ -529,6 +547,20 @@
         </div>
       </div>
       <div class="cond" id="cond-co">
+        <div id="coReuseWrap" class="field" style="display:none">
+          <span>Reuse a previous co-borrower</span>
+          <select id="coReuse"><option value="">— Start fresh —</option></select>
+          <div class="hint" style="margin-top:6px">Pick someone you've applied with before to fill in their details.</div>
+        </div>
+        <div class="grid-2">
+          <label class="field"><span>Co-borrower first name</span><input id="coFirst" autocomplete="off"></label>
+          <label class="field"><span>Co-borrower last name</span><input id="coLast" autocomplete="off"></label>
+        </div>
+        <div class="grid-2">
+          <label class="field"><span>Co-borrower email</span><input id="coEmail" type="email" autocomplete="off" placeholder="them@email.com"></label>
+          <label class="field"><span>Co-borrower phone</span><input id="coPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="(555) 555-5555"></label>
+        </div>
+        <label class="field"><span>Co-borrower current address</span><input id="coAddress" autocomplete="off" placeholder="Street, City, State ZIP"></label>
         <div class="grid-2">
           <div class="field"><span>Relationship</span>
             <select id="coRelationship"><option value="spouse">Spouse</option><option value="partner">Partner</option><option value="family">Family member</option><option value="other">Other</option></select></div>
@@ -542,6 +574,8 @@
           </div>
           <label class="field"><span>Co-borrower Date of Birth</span><input id="coDob" type="date" autocomplete="off"></label>
         </div>
+        <label class="choice" id="coInviteWrap" style="display:inline-flex;margin-top:4px"><input type="checkbox" id="coInvite" checked> &nbsp;Invite this co-borrower to create their own login</label>
+        <div class="hint" id="coInviteNote" style="margin-top:6px">If they accept, they can sign in, see this application, and add you as their co-borrower on their own applications. Their SSN is never stored.</div>
       </div>
       <label class="field"><span>Number of dependents</span><input id="dependents" inputmode="numeric" placeholder="0" style="max-width:140px"></label>
     </div>
